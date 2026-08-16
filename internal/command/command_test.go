@@ -168,7 +168,7 @@ func TestDoctorFailureMessageProvidesOneActionableNextStep(t *testing.T) {
 
 func TestLaunchRepairNeedsNoConfirmationAndSetupRunsFinalChecks(t *testing.T) {
 	if runtime.GOOS != "windows" {
-		t.Skip("Windows x64 is the v1.0.0 target")
+		t.Skip("Windows x64 is the v1.1.0 target")
 	}
 	if _, err := findPowerShell(); err != nil {
 		t.Skip(err)
@@ -320,5 +320,22 @@ func TestHookFailureCodesIdentifySafeDiagnosticStage(t *testing.T) {
 				t.Fatalf("diagnostic output leaked input: %q", output.String())
 			}
 		})
+	}
+}
+
+func TestStopHookSilentlySkipsUnavailableMetrics(t *testing.T) {
+	run, err := runcontext.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, value := range map[string]string{
+		runcontext.EnvRunID: run.ID, runcontext.EnvToken: run.Token, runcontext.EnvEndpoint: run.Endpoint,
+	} {
+		t.Setenv(name, value)
+	}
+	var output bytes.Buffer
+	app := App{In: strings.NewReader(`{"session_id":"thr_synthetic","hook_event_name":"Stop","transcript_path":"Z:\\missing\\session.jsonl"}`), Out: &output, Err: &output}
+	if code := app.Execute([]string{"_hook", "codex"}); code != 0 || output.Len() != 0 {
+		t.Fatalf("Stop hook exit = %d, output = %q", code, output.String())
 	}
 }

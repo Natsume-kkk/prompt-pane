@@ -12,6 +12,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/Natsume-kkk/prompt-pane/internal/config"
+	"github.com/Natsume-kkk/prompt-pane/internal/theme"
 )
 
 const (
@@ -77,6 +80,8 @@ type Model struct {
 	noColor     bool
 	finalFrame  bool
 	completion  CompletionMode
+	themeName   string
+	colors      theme.Roles
 }
 
 func Run(out io.Writer, completion CompletionMode, initial Progress, work func(Reporter) error) error {
@@ -119,23 +124,32 @@ func Run(out io.Writer, completion CompletionMode, initial Progress, work func(R
 
 func NewModel(events <-chan workEvent, completion CompletionMode, initial Progress) Model {
 	_, noColor := os.LookupEnv("NO_COLOR")
+	themeName, _, err := config.LoadTheme()
+	if err != nil {
+		themeName = theme.Auto
+	}
 	now := time.Now()
-	return Model{
+	model := Model{
 		events:     events,
 		width:      80,
 		now:        now,
 		progress:   normalize(initial),
 		noColor:    noColor,
 		completion: completion,
+		themeName:  themeName,
 	}
+	model.colors = theme.Derive(theme.Resolve(themeName, false))
+	return model
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(waitForEvent(m.events), nextTick())
+	return tea.Batch(waitForEvent(m.events), nextTick(), func() tea.Msg { return tea.RequestBackgroundColor() })
 }
 
 func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
+	case tea.BackgroundColorMsg:
+		m.colors = theme.Derive(theme.Resolve(m.themeName, !msg.IsDark()))
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.ensureParticles()
@@ -188,14 +202,14 @@ func (m Model) View() tea.View {
 	lines = append(lines, centerLine(m.renderStatus(), m.width))
 	if m.finalFrame {
 		title, next := completionCopy(m.completion)
-		lines = append(lines, "", centerLine(successStyle(m.noColor).Render(title), m.width), centerLine(next, m.width))
+		lines = append(lines, "", centerLine(successStyle(m.noColor, m.colors).Render(title), m.width), centerLine(next, m.width))
 	}
 	return tea.NewView(strings.Join(lines, "\n"))
 }
 
 func (m Model) renderCompactCompletion() string {
 	title, next := completionCopy(m.completion)
-	styledTitle := successStyle(m.noColor).Render(title)
+	styledTitle := successStyle(m.noColor, m.colors).Render(title)
 	combined := styledTitle + " · " + next
 	completion := []string{centerLine(combined, m.width)}
 	if ansi.StringWidth(combined) > m.width {
@@ -416,12 +430,12 @@ func (m Model) renderCanvas() []string {
 		for _, state := range canvas[row][:last+1] {
 			switch state {
 			case 1:
-				line.WriteString(activeStyle(m.noColor).Render("█"))
+				line.WriteString(activeStyle(m.noColor, m.colors).Render("█"))
 			case 2:
 				if m.failed {
-					line.WriteString(activeStyle(m.noColor).Render("█"))
+					line.WriteString(activeStyle(m.noColor, m.colors).Render("█"))
 				} else {
-					line.WriteString(logoStyle(m.noColor, m.finalFrame).Render("█"))
+					line.WriteString(logoStyle(m.noColor, m.finalFrame, m.colors).Render("█"))
 				}
 			default:
 				line.WriteByte(' ')
@@ -471,7 +485,7 @@ func (m Model) renderStatus() string {
 		progress = ansi.Truncate(progress, m.width, "")
 	}
 	if m.failed {
-		return failureStyle(m.noColor).Render(progress)
+		return failureStyle(m.noColor, m.colors).Render(progress)
 	}
 	return progress
 }
@@ -611,10 +625,10 @@ func formatBytes(value int64) string {
 	return fmt.Sprintf("%.1f %s", float64(value)/float64(divisor), suffix)
 }
 
-func logoStyle(noColor, bright bool) lipgloss.Style {
+func logoStyle(noColor, bright bool, roles ...theme.Roles) lipgloss.Style {
 	style := lipgloss.NewStyle()
 	if !noColor {
-		style = style.Foreground(lipgloss.Color("2"))
+		style = style.Foreground(lipgloss.Color(setupRoles(roles).Success))
 	}
 	if bright {
 		style = style.Bold(true)
@@ -622,28 +636,35 @@ func logoStyle(noColor, bright bool) lipgloss.Style {
 	return style
 }
 
-func activeStyle(noColor bool) lipgloss.Style {
+func activeStyle(noColor bool, roles ...theme.Roles) lipgloss.Style {
 	style := lipgloss.NewStyle().Faint(true)
 	if !noColor {
-		style = style.Foreground(lipgloss.Color("8"))
+		style = style.Foreground(lipgloss.Color(setupRoles(roles).Muted))
 	}
 	return style
 }
 
-func successStyle(noColor bool) lipgloss.Style {
+func successStyle(noColor bool, roles ...theme.Roles) lipgloss.Style {
 	style := lipgloss.NewStyle().Bold(true)
 	if !noColor {
-		style = style.Foreground(lipgloss.Color("2"))
+		style = style.Foreground(lipgloss.Color(setupRoles(roles).Success))
 	}
 	return style
 }
 
-func failureStyle(noColor bool) lipgloss.Style {
+func failureStyle(noColor bool, roles ...theme.Roles) lipgloss.Style {
 	style := lipgloss.NewStyle().Bold(true)
 	if !noColor {
-		style = style.Foreground(lipgloss.Color("1"))
+		style = style.Foreground(lipgloss.Color(setupRoles(roles).Error))
 	}
 	return style
+}
+
+func setupRoles(roles []theme.Roles) theme.Roles {
+	if len(roles) > 0 && roles[0].Success != "" {
+		return roles[0]
+	}
+	return theme.Derive(theme.Resolve(theme.Mocha, false))
 }
 
 type cell struct{ x, y int }

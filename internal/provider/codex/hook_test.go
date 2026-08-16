@@ -1,6 +1,9 @@
 package codex
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -104,5 +107,47 @@ func TestDecodeHookRejectsTrailingJSON(t *testing.T) {
 	input := `{"session_id":"thr_123","hook_event_name":"SessionStart"}{"extra":true}`
 	if _, err := DecodeHook(strings.NewReader(input)); err == nil {
 		t.Fatal("expected trailing JSON error")
+	}
+}
+
+func TestDecodeStopReadsOnlyCurrentTranscriptMetrics(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "current.jsonl")
+	transcript := strings.Join([]string{
+		`{"timestamp":"2026-08-16T01:00:00Z","type":"session_meta","payload":{"id":"thr_exact"}}`,
+		`{"timestamp":"2026-08-16T01:01:00Z","type":"turn_context","payload":{"model":"gpt-5.4","effort":"high"}}`,
+		`{"timestamp":"2026-08-16T01:02:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"output_tokens":250,"total_tokens":1250},"last_token_usage":{"input_tokens":32000},"model_context_window":128000},"rate_limits":{"limit_id":"codex","primary":{"used_percent":25,"window_minutes":300,"resets_at":9999999999},"secondary":{"used_percent":50,"window_minutes":10080,"resets_at":9999999999}}}}`,
+	}, "\n")
+	if err := os.WriteFile(path, []byte(transcript), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	input, err := json.Marshal(map[string]string{
+		"session_id": "thr_exact", "hook_event_name": "Stop", "transcript_path": path,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, err := DecodeHook(bytes.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	metrics := event.Metrics
+	if event.Kind != provider.MetricsUpdated || metrics == nil || metrics.Model != "gpt-5.4" || metrics.Effort != "high" || metrics.TotalTokens != 1250 || metrics.ContextWindow != 128000 || metrics.ContextUsedPercent != 25 {
+		t.Fatalf("metrics event = %#v", event)
+	}
+	if metrics.FiveHour == nil || metrics.FiveHour.UsedPercent != 25 || metrics.SevenDay == nil || metrics.SevenDay.UsedPercent != 50 {
+		t.Fatalf("quota metrics = %#v", metrics)
+	}
+}
+
+func TestDecodeStopRejectsTranscriptFromAnotherSession(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "other.jsonl")
+	if err := os.WriteFile(path, []byte(`{"type":"session_meta","payload":{"id":"thr_other"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	input, _ := json.Marshal(map[string]string{
+		"session_id": "thr_current", "hook_event_name": "Stop", "transcript_path": path,
+	})
+	if _, err := DecodeHook(bytes.NewReader(input)); !errors.Is(err, ErrMetricsUnavailable) {
+		t.Fatalf("mismatched transcript error = %v", err)
 	}
 }

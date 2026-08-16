@@ -3,6 +3,7 @@ package command
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -22,7 +23,7 @@ import (
 	"github.com/Natsume-kkk/prompt-pane/internal/zellij"
 )
 
-const Version = "1.0.0"
+const Version = "1.1.0"
 
 const (
 	hookRunEnvironmentExitCode = 10
@@ -443,6 +444,9 @@ func (a App) hook(args []string) int {
 	}
 	event, err := codex.DecodeHook(a.In)
 	if err != nil {
+		if errors.Is(err, codex.ErrMetricsUnavailable) {
+			return 0
+		}
 		return a.failCode(hookInputExitCode, err.Error())
 	}
 	ctx, cancel := ipc.HookContext()

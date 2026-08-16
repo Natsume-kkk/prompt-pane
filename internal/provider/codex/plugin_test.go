@@ -27,7 +27,7 @@ func TestWindowsHooksInvokePluginExecutableWithPowerShell(t *testing.T) {
 		t.Fatal(err)
 	}
 	const expected = `& "${PLUGIN_ROOT}/bin/prompt-pane.exe" _hook codex; exit $LASTEXITCODE`
-	for _, event := range []string{"SessionStart", "UserPromptSubmit", "SessionEnd"} {
+	for _, event := range []string{"SessionStart", "UserPromptSubmit", "Stop", "SessionEnd"} {
 		groups := config.Hooks[event]
 		if len(groups) != 1 || len(groups[0].Hooks) != 1 {
 			t.Fatalf("%s must contain exactly one command hook", event)

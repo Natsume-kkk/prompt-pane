@@ -6,13 +6,17 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/Natsume-kkk/prompt-pane/internal/config"
 	"github.com/Natsume-kkk/prompt-pane/internal/ipc"
+	"github.com/Natsume-kkk/prompt-pane/internal/provider"
+	"github.com/Natsume-kkk/prompt-pane/internal/theme"
 )
 
 var (
@@ -31,6 +35,9 @@ type snapshotMsg struct {
 
 type streamEndedMsg struct{}
 
+type themeSavedMsg struct{ name string }
+type themeSaveFailedMsg struct{ err error }
+
 type promptRange struct {
 	start int
 	end   int
@@ -48,42 +55,60 @@ type textPoint struct {
 }
 
 type Model struct {
-	decoder        *json.Decoder
-	snapshot       ipc.Snapshot
-	width          int
-	height         int
-	offset         int
-	following      bool
-	newCount       int
-	noColor        bool
-	selectedID     string
-	expanded       map[string]bool
-	showHelp       bool
-	helpOffset     int
-	closeViewer    bool
-	pendingClick   bool
-	pendingClickAt textPoint
-	selecting      bool
-	dragging       bool
-	textSelected   bool
-	selectionStart textPoint
-	selectionEnd   textPoint
+	decoder         *json.Decoder
+	snapshot        ipc.Snapshot
+	width           int
+	height          int
+	offset          int
+	following       bool
+	newCount        int
+	noColor         bool
+	selectedID      string
+	expanded        map[string]bool
+	showHelp        bool
+	showTheme       bool
+	helpOffset      int
+	themeName       string
+	themeSource     config.ThemeSource
+	themeIndex      int
+	themeOriginal   string
+	themeMessage    string
+	lightBackground bool
+	colors          theme.Roles
+	closeViewer     bool
+	pendingClick    bool
+	pendingClickAt  textPoint
+	selecting       bool
+	dragging        bool
+	textSelected    bool
+	selectionStart  textPoint
+	selectionEnd    textPoint
 }
 
 func New(decoder *json.Decoder) Model {
 	_, noColor := os.LookupEnv("NO_COLOR")
-	return Model{
+	themeName, source, err := config.LoadTheme()
+	if err != nil {
+		themeName, source = theme.Auto, config.ThemeDefault
+	}
+	model := Model{
 		decoder: decoder, following: true, noColor: noColor,
 		expanded: make(map[string]bool), snapshot: ipc.Snapshot{State: "ready"},
+		themeName: themeName, themeSource: source,
 	}
+	model.applyTheme(themeName)
+	return model
 }
 
 func (m Model) Init() tea.Cmd {
-	return readSnapshot(m.decoder)
+	return tea.Batch(readSnapshot(m.decoder), func() tea.Msg { return tea.RequestBackgroundColor() })
 }
 
 func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
+	case tea.BackgroundColorMsg:
+		m.lightBackground = !msg.IsDark()
+		m.applyTheme(m.themeName)
 	case tea.WindowSizeMsg:
 		m.resetPendingClick()
 		m.resetTextSelection()
@@ -100,10 +125,32 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		if m.showHelp {
+			if m.showTheme {
+				switch key {
+				case "up", "k":
+					m.moveTheme(-1)
+				case "down", "j":
+					m.moveTheme(1)
+				case "enter":
+					if m.themeSource == config.ThemeEnvironment {
+						m.themeMessage = theme.Environment + " is active"
+						return m, nil
+					}
+					name := theme.Names()[m.themeIndex]
+					return m, saveTheme(name)
+				case "esc", "h", "t":
+					m.applyTheme(m.themeOriginal)
+					m.showTheme = false
+					m.themeMessage = ""
+				}
+				return m, nil
+			}
 			switch key {
 			case "h", "esc":
 				m.showHelp = false
 				m.helpOffset = 0
+			case "t":
+				m.openThemePicker()
 			case "up":
 				m.scrollHelp(-1)
 			case "down":
@@ -216,6 +263,15 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		readCmd := readSnapshot(m.decoder)
 		return m, readCmd
+	case themeSavedMsg:
+		m.themeName = msg.name
+		m.themeSource = config.ThemeConfig
+		m.applyTheme(msg.name)
+		m.showTheme = false
+		m.themeMessage = ""
+	case themeSaveFailedMsg:
+		m.applyTheme(m.themeOriginal)
+		m.themeMessage = "Could not save theme: " + msg.err.Error()
 	case streamEndedMsg:
 		m.resetPendingClick()
 		m.resetTextSelection()
@@ -246,6 +302,39 @@ func readSnapshot(decoder *json.Decoder) tea.Cmd {
 		}
 		return snapshotMsg{snapshot: snapshot}
 	}
+}
+
+func saveTheme(name string) tea.Cmd {
+	return func() tea.Msg {
+		if err := config.SaveTheme(name); err != nil {
+			return themeSaveFailedMsg{err: err}
+		}
+		return themeSavedMsg{name: name}
+	}
+}
+
+func (m *Model) applyTheme(name string) {
+	m.themeName = name
+	m.colors = theme.Derive(theme.Resolve(name, m.lightBackground))
+}
+
+func (m *Model) openThemePicker() {
+	m.showTheme = true
+	m.themeOriginal = m.themeName
+	m.themeMessage = ""
+	for index, name := range theme.Names() {
+		if name == m.themeName {
+			m.themeIndex = index
+			break
+		}
+	}
+}
+
+func (m *Model) moveTheme(delta int) {
+	names := theme.Names()
+	m.themeIndex = (m.themeIndex + delta + len(names)) % len(names)
+	m.applyTheme(names[m.themeIndex])
+	m.themeMessage = ""
 }
 
 func (m *Model) scroll(delta int) {
@@ -518,7 +607,19 @@ func (m Model) maxOffset() int {
 
 func (m Model) bodyHeight() int {
 	height := m.height
-	if m.height >= 8 {
+	if m.showHelp {
+		if m.height >= 3 {
+			height--
+		}
+	} else if m.snapshot.Metrics != nil {
+		if m.height >= 10 {
+			height -= 4
+		} else if m.height >= 6 {
+			height -= 3
+		} else if m.height >= 3 {
+			height--
+		}
+	} else if m.height >= 8 {
 		height -= 2
 	} else if m.height >= 3 {
 		height--
@@ -552,7 +653,15 @@ func (m Model) render() string {
 	}
 
 	lines := visible
-	if m.height >= 8 {
+	if m.showHelp && m.height >= 3 {
+		lines = append(lines, m.renderFooter(m.height < 8))
+	} else if m.snapshot.Metrics != nil && m.height >= 10 {
+		status := m.renderStatusLines()
+		lines = append(lines, "", status[0], status[1], m.renderFooter(false))
+	} else if m.snapshot.Metrics != nil && m.height >= 6 {
+		status := m.renderStatusLines()
+		lines = append(lines, status[0], status[1], m.renderFooter(true))
+	} else if m.height >= 8 {
 		lines = append(lines, "", m.renderFooter(false))
 	} else if m.height >= 3 {
 		lines = append(lines, m.renderFooter(true))
@@ -563,7 +672,11 @@ func (m Model) render() string {
 func (m Model) visibleBodyLines() []string {
 	body := m.bodyLines()
 	start := m.offset
-	if m.showHelp {
+	if m.showTheme {
+		body = m.themeLines()
+		selectedLine := 3 + m.themeIndex
+		start = max(0, selectedLine-m.bodyHeight()+1)
+	} else if m.showHelp {
 		body = m.helpLines()
 		start = m.helpOffset
 	}
@@ -591,7 +704,8 @@ func (m Model) renderTextSelection(line string, row int) string {
 	if !m.noColor {
 		// Explicit cell colors avoid reverse-video continuation artifacts when
 		// a selection ends on a double-width grapheme behind a multiplexer.
-		selectionStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("7"))
+		colors := m.visualRoles()
+		selectionStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(colors.Selection)).Background(lipgloss.Color(colors.Cell))
 	}
 	return prefix + selectionStyle.Render(selected) + suffix
 }
@@ -606,11 +720,18 @@ func (m Model) renderFooter(compactHeight bool) string {
 	if m.snapshot.State == "ready" && m.width >= 32 {
 		actions = "h troubleshoot"
 	}
-	if m.showHelp {
+	if m.showTheme {
+		actions = "↑↓ preview · Enter save · Esc cancel"
+		if compactHeight || m.width < 44 {
+			actions = "↑↓ · Enter · Esc"
+		}
+	} else if m.showHelp {
 		actions = "↑↓ scroll · Esc close"
 		if compactHeight || m.width < 32 {
 			actions = "↑↓ · Esc"
 		}
+	} else if m.snapshot.Metrics != nil && m.height < 6 {
+		actions = m.compactMetrics()
 	} else if m.newCount > 0 {
 		actions = fmt.Sprintf("%d new · End latest", m.newCount)
 		if compactHeight || m.width < 32 {
@@ -624,6 +745,24 @@ func (m Model) renderFooter(compactHeight bool) string {
 		gap = max(0, m.width-ansi.StringWidth(left))
 	}
 	return left + strings.Repeat(" ", gap) + right
+}
+
+func (m Model) compactMetrics() string {
+	metrics := m.snapshot.Metrics
+	if metrics == nil {
+		return ""
+	}
+	parts := make([]string, 0, 3)
+	if metrics.TotalTokens > 0 {
+		parts = append(parts, "T "+compactNumber(metrics.TotalTokens))
+	}
+	if metrics.FiveHour != nil {
+		parts = append(parts, fmt.Sprintf("5h %.0f%%", metrics.FiveHour.UsedPercent))
+	}
+	if metrics.SevenDay != nil {
+		parts = append(parts, fmt.Sprintf("7d %.0f%%", metrics.SevenDay.UsedPercent))
+	}
+	return strings.Join(parts, " · ")
 }
 
 func (m Model) helpLines() []string {
@@ -658,6 +797,7 @@ func (m Model) helpLines() []string {
 			" Enter   Expand/fold",
 			" Drag    Copy text",
 			" c       Fold all",
+			" t       Theme",
 		)
 	} else {
 		entries = append(entries,
@@ -671,16 +811,229 @@ func (m Model) helpLines() []string {
 			helpEntry("Enter", "Expand or fold"),
 			helpEntry("Drag", "Copy visible text"),
 			helpEntry("c", "Fold all"),
+			helpEntry("t", "Choose theme"),
 		)
 	}
+	entries = append(entries, "", " Theme: "+m.themeName)
 	for index := range entries {
 		entries[index] = m.styleMuted(entries[index])
 	}
 	return entries
 }
 
+func (m Model) themeLines() []string {
+	lines := []string{" Theme", "", " Choose a global color theme:"}
+	for index, name := range theme.Names() {
+		marker := "  "
+		if index == m.themeIndex {
+			marker = "› "
+		}
+		label := marker + name
+		if m.noColor {
+			if index == m.themeIndex {
+				label = lipgloss.NewStyle().Bold(true).Render(label)
+			}
+		} else {
+			palette := theme.Resolve(name, m.lightBackground)
+			label = lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Sapphire)).Render(label)
+		}
+		lines = append(lines, " "+label)
+	}
+	if m.themeSource == config.ThemeEnvironment {
+		lines = append(lines, "", m.styleWarning(" "+theme.Environment+" overrides saved settings"))
+	} else if m.themeMessage != "" {
+		lines = append(lines, "", m.styleWarning(" "+m.themeMessage))
+	}
+	return lines
+}
+
 func helpEntry(key, description string) string {
 	return fmt.Sprintf(" %-9s  %s", key, description)
+}
+
+func (m Model) renderStatusLines() [2]string {
+	if m.snapshot.Metrics == nil || m.width < 24 {
+		return [2]string{}
+	}
+	metrics := m.snapshot.Metrics
+	colors := m.visualRoles()
+	available := max(1, m.width-1)
+	project := m.renderProject(metrics)
+	total := ""
+	if metrics.TotalTokens > 0 {
+		total = m.styleColor("Total: "+compactNumber(metrics.TotalTokens), colors.Token)
+	}
+	model := ""
+	if metrics.Model != "" {
+		label := metrics.Model
+		if metrics.Effort != "" {
+			label += " " + metrics.Effort
+		}
+		model = m.styleColor("Model: "+label, colors.Error)
+	}
+	line1 := fitStatusPieces(available, []string{project, total, model}, []int{2, 0})
+
+	line2 := m.renderLimitLine(true, true)
+	if ansi.StringWidth(line2) > available {
+		line2 = m.renderLimitLine(false, true)
+	}
+	if ansi.StringWidth(line2) > available {
+		line2 = m.renderLimitLine(false, false)
+	}
+	if ansi.StringWidth(line2) > available {
+		line2 = ansi.Truncate(line2, available, "")
+	}
+	return [2]string{prefixStatus(line1), prefixStatus(line2)}
+}
+
+func (m Model) renderProject(metrics *provider.SessionMetrics) string {
+	if metrics.Project == "" {
+		return ""
+	}
+	colors := m.visualRoles()
+	project := m.styleColor("["+metrics.Project+"]", colors.Project)
+	if !m.noColor {
+		project = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colors.Project)).Render("[" + metrics.Project + "]")
+	}
+	if metrics.Branch == "" {
+		return project
+	}
+	git := m.styleColor(metrics.Branch, colors.Branch)
+	if metrics.Added > 0 {
+		git += " " + m.styleColor(fmt.Sprintf("+%d", metrics.Added), colors.Added)
+	}
+	if metrics.Deleted > 0 {
+		git += " " + m.styleColor(fmt.Sprintf("-%d", metrics.Deleted), colors.Deleted)
+	}
+	if metrics.Untracked > 0 {
+		git += " " + m.styleColor(fmt.Sprintf("?%d", metrics.Untracked), colors.Untracked)
+	}
+	return project + "(" + git + ")"
+}
+
+func (m Model) renderLimitLine(bars, contextVisible bool) string {
+	metrics := m.snapshot.Metrics
+	if metrics == nil {
+		return ""
+	}
+	colors := m.visualRoles()
+	pieces := make([]string, 0, 3)
+	if metrics.FiveHour != nil {
+		pieces = append(pieces, m.renderQuota("5h", metrics.FiveHour, bars))
+	}
+	if metrics.SevenDay != nil {
+		pieces = append(pieces, m.renderQuota("7d", metrics.SevenDay, bars))
+	}
+	if contextVisible && metrics.ContextUsedPercent > 0 {
+		label := "Ctx"
+		if metrics.ContextWindow > 0 {
+			label = compactNumber(metrics.ContextWindow) + " Ctx"
+		}
+		pieces = append(pieces, m.styleColor(label+" ", colors.Label)+m.renderPercent(metrics.ContextUsedPercent, bars))
+	}
+	if len(pieces) > 0 && (metrics.FiveHour != nil || metrics.SevenDay != nil) {
+		pieces[0] = m.styleColor("Limit: ", colors.Label) + pieces[0]
+	}
+	return strings.Join(pieces, " | ")
+}
+
+func (m Model) renderQuota(label string, quota *provider.QuotaWindow, bars bool) string {
+	text := m.styleColor(label+" ", m.visualRoles().Label) + m.renderPercent(quota.UsedPercent, bars)
+	if bars && quota.ResetsAt > time.Now().Unix() && m.width >= 100 {
+		text += m.styleMuted(" (reset " + formatDuration(quota.ResetsAt-time.Now().Unix()) + ")")
+	}
+	return text
+}
+
+func (m Model) renderPercent(percent float64, bars bool) string {
+	percent = max(0, min(100, percent))
+	color := quotaColor(percent, m.visualRoles())
+	if !bars {
+		return m.styleColor(fmt.Sprintf("%.0f%%", percent), color)
+	}
+	const width = 8
+	filled := int(percent/100*width + 0.5)
+	bar := m.styleColor(strings.Repeat("█", filled), color)
+	empty := strings.Repeat("░", width-filled)
+	if percent > 0 {
+		empty = m.styleColor(empty, color)
+	}
+	return bar + empty + " " + m.styleColor(fmt.Sprintf("%.0f%%", percent), color)
+}
+
+func fitStatusPieces(width int, pieces []string, removalOrder []int) string {
+	active := append([]string(nil), pieces...)
+	join := func() string {
+		filtered := make([]string, 0, len(active))
+		for _, piece := range active {
+			if piece != "" {
+				filtered = append(filtered, piece)
+			}
+		}
+		return strings.Join(filtered, " | ")
+	}
+	for _, index := range removalOrder {
+		if ansi.StringWidth(join()) <= width {
+			break
+		}
+		active[index] = ""
+	}
+	return ansi.Truncate(join(), width, "")
+}
+
+func prefixStatus(line string) string {
+	if line == "" {
+		return ""
+	}
+	return " " + line
+}
+
+func compactNumber(value int64) string {
+	if value >= 1_000_000 {
+		return fmt.Sprintf("%.1fM", float64(value)/1_000_000)
+	}
+	if value < 1000 {
+		return fmt.Sprintf("%d", value)
+	}
+	return fmt.Sprintf("%.0fk", float64(value)/1000)
+}
+
+func formatDuration(seconds int64) string {
+	if seconds >= 86400 {
+		return fmt.Sprintf("%dd%dh", seconds/86400, seconds%86400/3600)
+	}
+	if seconds >= 3600 {
+		return fmt.Sprintf("%dh%dm", seconds/3600, seconds%3600/60)
+	}
+	return fmt.Sprintf("%dm", seconds/60)
+}
+
+func quotaColor(percent float64, colors theme.Roles) string {
+	if percent >= 80 {
+		return colors.Error
+	}
+	if percent >= 50 {
+		return colors.Warning
+	}
+	return colors.Success
+}
+
+func (m Model) visualRoles() theme.Roles {
+	if m.colors.Accent != "" {
+		return m.colors
+	}
+	return theme.Derive(theme.Resolve(theme.Mocha, false))
+}
+
+func (m Model) styleColor(text, color string) string {
+	if m.noColor {
+		return text
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(text)
+}
+
+func (m Model) styleWarning(text string) string {
+	return m.styleColor(text, m.visualRoles().Warning)
 }
 
 func (m Model) styleState(label string) string {
@@ -689,11 +1042,11 @@ func (m Model) styleState(label string) string {
 	}
 	switch m.snapshot.State {
 	case "live":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render(label)
+		return m.styleColor(label, m.visualRoles().Success)
 	case "ready":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render(label)
+		return m.styleColor(label, m.visualRoles().Success)
 	case "error":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render(label)
+		return m.styleColor(label, m.visualRoles().Error)
 	default:
 		return m.styleMuted(label)
 	}
@@ -703,13 +1056,13 @@ func (m Model) styleMuted(text string) string {
 	if m.noColor {
 		return text
 	}
-	return lipgloss.NewStyle().Faint(true).Render(text)
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(m.visualRoles().Muted)).Render(text)
 }
 
 func (m Model) styleSelected(text string) string {
 	style := lipgloss.NewStyle().Bold(m.noColor)
 	if !m.noColor {
-		style = style.Foreground(lipgloss.Color("6"))
+		style = style.Foreground(lipgloss.Color(m.visualRoles().Accent))
 	}
 	return style.Render(text)
 }
@@ -720,7 +1073,7 @@ func (m Model) styleNotice(text string) string {
 		if m.noColor {
 			return text
 		}
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render(text)
+		return m.styleColor(text, m.visualRoles().Error)
 	case "live":
 		return text
 	default:

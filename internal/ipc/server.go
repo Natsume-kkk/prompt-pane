@@ -25,6 +25,7 @@ type Server struct {
 	prompts   []provider.UserPrompt
 	seen      map[string]struct{}
 	notice    string
+	metrics   *provider.SessionMetrics
 	viewers   map[net.Conn]struct{}
 	closed    chan struct{}
 	closeOnce sync.Once
@@ -137,15 +138,18 @@ func (s *Server) apply(event provider.Event) bool {
 		switch event.Source {
 		case provider.SessionSourceResume:
 			s.prompts = nil
+			s.metrics = nil
 			s.seen = make(map[string]struct{})
 			s.notice = "Session resumed. Showing new prompts only."
 		case provider.SessionSourceClear:
 			s.prompts = nil
+			s.metrics = nil
 			s.seen = make(map[string]struct{})
 			s.notice = "Session cleared. Showing new prompts only."
 		case provider.SessionSourceStartup:
 			if sessionChanged {
 				s.prompts = nil
+				s.metrics = nil
 				s.seen = make(map[string]struct{})
 				s.notice = "New session started. Showing new prompts only."
 			} else {
@@ -172,6 +176,18 @@ func (s *Server) apply(event provider.Event) bool {
 		s.prompts = append(s.prompts, *event.Prompt)
 		s.state = "live"
 		s.notice = ""
+	case provider.MetricsUpdated:
+		if event.Metrics == nil || s.sessionID == "" || event.SessionID != s.sessionID {
+			_, stale := s.stale[event.SessionID]
+			s.mu.Unlock()
+			return event.Metrics != nil && stale
+		}
+		if s.state == "ended" {
+			s.mu.Unlock()
+			return true
+		}
+		copy := *event.Metrics
+		s.metrics = &copy
 	case provider.SessionEnded:
 		if event.SessionID != s.sessionID {
 			_, stale := s.stale[event.SessionID]
@@ -201,7 +217,12 @@ func (s *Server) addViewer(conn net.Conn) {
 
 func (s *Server) snapshotLocked() Snapshot {
 	prompts := append([]provider.UserPrompt(nil), s.prompts...)
-	return Snapshot{State: s.state, Prompts: prompts, Notice: s.notice}
+	var metrics *provider.SessionMetrics
+	if s.metrics != nil {
+		copy := *s.metrics
+		metrics = &copy
+	}
+	return Snapshot{State: s.state, Prompts: prompts, Notice: s.notice, Metrics: metrics}
 }
 
 func (s *Server) broadcastLocked() {

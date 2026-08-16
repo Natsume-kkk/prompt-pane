@@ -10,8 +10,11 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/Natsume-kkk/prompt-pane/internal/config"
 	"github.com/Natsume-kkk/prompt-pane/internal/ipc"
+	"github.com/Natsume-kkk/prompt-pane/internal/paths"
 	"github.com/Natsume-kkk/prompt-pane/internal/provider"
+	"github.com/Natsume-kkk/prompt-pane/internal/theme"
 )
 
 func leftClick(model Model, x, y int) Model {
@@ -54,6 +57,33 @@ func TestRenderFitsFixedSizes(t *testing.T) {
 				if got := ansi.StringWidth(line); got > size[0] {
 					t.Fatalf("color=%v %dx%d line %d width = %d: %q", !noColor, size[0], size[1], index, got, line)
 				}
+			}
+		}
+	}
+}
+
+func TestAllTokenTrackerThemesRenderAtFixedSizes(t *testing.T) {
+	sizes := [][2]int{{20, 6}, {24, 10}, {32, 12}, {48, 20}, {80, 24}}
+	for _, name := range theme.Names()[1:] {
+		for _, size := range sizes {
+			model := Model{
+				width: size[0], height: size[1], following: true,
+				snapshot: ipc.Snapshot{State: "live", Prompts: []provider.UserPrompt{{ID: "1", Text: "中文 prompt"}}, Metrics: &provider.SessionMetrics{
+					TotalTokens: 12000, ContextWindow: 128000, ContextUsedPercent: 42,
+					FiveHour: &provider.QuotaWindow{UsedPercent: 55}, SevenDay: &provider.QuotaWindow{UsedPercent: 82},
+				}},
+			}
+			model.applyTheme(name)
+			output := model.render()
+			for index, line := range strings.Split(output, "\n") {
+				if got := ansi.StringWidth(line); got > size[0] {
+					t.Fatalf("theme=%s %dx%d line %d width = %d", name, size[0], size[1], index, got)
+				}
+			}
+			palette := theme.Resolve(name, false)
+			expectedState := lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Green)).Render("[LIVE]")
+			if !strings.Contains(output, expectedState) {
+				t.Fatalf("theme=%s did not use its exact success color: %q", name, output)
 			}
 		}
 	}
@@ -390,9 +420,63 @@ func TestMouseDragUsesExplicitColorsForWideSelection(t *testing.T) {
 	model = updated.(Model)
 
 	output := model.render()
-	expected := lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("7")).Render("只回复")
+	palette := theme.Resolve(theme.Mocha, false)
+	expected := lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Sapphire)).Background(lipgloss.Color(palette.Cell)).Render("只回复")
 	if !strings.Contains(output, expected) || strings.Contains(output, "\x1b[7m") {
 		t.Fatalf("wide selection did not use explicit colors: %q", output)
+	}
+}
+
+func TestThemePickerPreviewsAndCancelsSelection(t *testing.T) {
+	model := Model{width: 48, height: 20, noColor: true, showHelp: true, themeName: theme.Mocha, themeSource: config.ThemeConfig}
+	model.applyTheme(theme.Mocha)
+	updated, _ := model.Update(tea.KeyPressMsg{Code: 't'})
+	model = updated.(Model)
+	if !model.showTheme || !strings.Contains(model.render(), "mocha") {
+		t.Fatalf("theme picker did not open: %q", model.render())
+	}
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	model = updated.(Model)
+	if model.themeName != theme.Latte || model.colors.Success != "#40a02b" {
+		t.Fatalf("theme preview = %q %#v", model.themeName, model.colors)
+	}
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	model = updated.(Model)
+	if model.showTheme || model.themeName != theme.Mocha {
+		t.Fatalf("theme cancel did not restore original: %#v", model)
+	}
+}
+
+func TestThemePickerSavesSelection(t *testing.T) {
+	t.Setenv(paths.EnvHome, t.TempDir())
+	model := Model{width: 48, height: 20, noColor: true, showHelp: true, themeName: theme.Mocha, themeSource: config.ThemeConfig}
+	model.applyTheme(theme.Mocha)
+	updated, _ := model.Update(tea.KeyPressMsg{Code: 't'})
+	model = updated.(Model)
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	model = updated.(Model)
+	updated, command := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	model = updated.(Model)
+	if command == nil {
+		t.Fatal("theme save command is nil")
+	}
+	updated, _ = model.Update(command())
+	model = updated.(Model)
+	name, source, err := config.LoadTheme()
+	if err != nil || name != theme.Latte || source != config.ThemeConfig || model.showTheme {
+		t.Fatalf("saved theme = %q, source = %q, picker = %v, err = %v", name, source, model.showTheme, err)
+	}
+}
+
+func TestStatusLineUsesThemeRolesAndFitsWidth(t *testing.T) {
+	model := Model{width: 48, height: 12, snapshot: ipc.Snapshot{State: "live", Metrics: &provider.SessionMetrics{
+		Project: "prompt-pane", Branch: "main", Model: "gpt-5", TotalTokens: 12500, ContextUsedPercent: 42,
+		FiveHour: &provider.QuotaWindow{UsedPercent: 75}, SevenDay: &provider.QuotaWindow{UsedPercent: 92},
+	}}}
+	model.applyTheme(theme.Dracula)
+	lines := model.renderStatusLines()
+	if ansi.StringWidth(lines[0]) > model.width || ansi.StringWidth(lines[1]) > model.width || !strings.Contains(lines[1], "\x1b[38;2;255;85;85m") {
+		t.Fatalf("status lines do not fit or use Dracula danger color: %q", lines)
 	}
 }
 

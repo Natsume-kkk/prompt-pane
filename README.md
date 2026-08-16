@@ -12,7 +12,7 @@ Prompt Pane 在同一个终端工作区中并排运行 Codex CLI 与本次运行
 
 ## 当前版本
 
-当前版本为 `v1.0.0`，支持 Windows x64。目前暂未提供预编译安装包或 GitHub Release。
+当前源码版本为 `v1.1.0`，支持 Windows x64。目前暂未提供预编译安装包或 GitHub Release。
 
 | 项目 | 支持范围 |
 |---|---|
@@ -89,11 +89,19 @@ codex.pp resume
 | 折叠全部长提示词 | `c` |
 | 打开帮助 | `h` |
 | 关闭帮助 | `h` 或 `Esc` |
+| 从帮助页打开主题设置 | `t` |
+| 预览／保存／取消主题 | `↑`／`↓`、`Enter`、`Esc` |
 | 关闭右侧 viewer | `Ctrl+X` |
 | 选择提示词 | 左键单击 |
 | 选择并复制可见文字 | 按住左键拖动，松开后复制 |
 
 `Ctrl+X` 只关闭右侧 viewer，左侧 Codex 会继续运行。终端不支持 OSC 52 时，可以按住 `Shift` 使用终端原生选择和复制。
+
+### 状态栏与主题
+
+每次 Codex 回答完成后，viewer 会更新当前会话的累计 token、上下文占用、5 小时／7 天限额、模型以及宽度允许时的项目 Git 状态。指标不可用时会隐藏，不用 `0` 代替未知值。
+
+内置主题为 `mocha`、`latte`、`frappe`、`macchiato`、`nord` 和 `dracula`，色值与语义映射来自 Token Tracker。默认 `auto` 会在可确认浅色背景时使用 `latte`，否则使用 `mocha`。在帮助页按 `t` 可实时预览并保存；也可用 `PROMPT_PANE_THEME` 临时覆盖。`NO_COLOR` 会关闭颜色。
 
 ## 会话行为
 
@@ -119,7 +127,8 @@ Zellij 负责 70/30 窗格，Bubble Tea 负责右侧 TUI。每次运行都有独
 
 ## 隐私与安全
 
-- 不扫描 `~/.codex/sessions`，不读取 App Server 或 transcript 历史。
+- 不扫描 `~/.codex/sessions`，不读取 App Server，也不按最近文件猜测会话。
+- `Stop` Hook 只按 Codex 提供的当前会话准确 `transcript_path` 筛选结构化用量元数据；不读取、传输或保存其中的 prompt、回答、推理和工具内容。
 - prompt 只经过 Hook 标准输入、当前用户本地 IPC、进程内存和终端画面。
 - 不把 prompt 写入日志、配置、缓存、遥测或网络请求。
 - 鼠标拖选只复制当前视口中已经安全渲染的文字；程序不会读取剪贴板。
@@ -200,3 +209,5 @@ go test -race ./...
 ## 许可证
 
 Prompt Pane 使用 [Apache License 2.0](LICENSE)。
+
+主题色和状态栏设计包含来自 Token Tracker 的 MIT 许可内容，详见 [第三方声明](THIRD_PARTY_NOTICES.md)。

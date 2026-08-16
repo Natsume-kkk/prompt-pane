@@ -26,6 +26,18 @@
         ]
       }
     ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "prompt-pane _hook codex",
+            "commandWindows": "& \"${PLUGIN_ROOT}/bin/prompt-pane.exe\" _hook codex; exit $LASTEXITCODE",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
     "SessionEnd": [
       {
         "hooks": [

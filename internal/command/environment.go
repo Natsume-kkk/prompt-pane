@@ -21,7 +21,7 @@ func requireWindowsX64() error {
 
 func checkPlatform(goos, goarch string) error {
 	if goos != "windows" || goarch != "amd64" {
-		return fmt.Errorf("Prompt Pane v1.0.0 supports Windows x64 only (current: %s/%s)", goos, goarch)
+		return fmt.Errorf("Prompt Pane v1.1.0 supports Windows x64 only (current: %s/%s)", goos, goarch)
 	}
 	return nil
 }

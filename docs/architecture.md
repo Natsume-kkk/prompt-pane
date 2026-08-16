@@ -4,7 +4,7 @@
 
 Prompt Pane 是独立 Go CLI。Zellij 只负责终端内 70/30 布局，Bubble Tea 只负责右侧 TUI，Codex 官方 Hooks 是实时提示词事实源。程序不调用终端品牌专有 API；能够正常运行受支持 Zellij 的终端均在支持边界内。
 
-Prompt Pane 不读取 `~/.codex/sessions`、Codex App Server 历史或 Hook 提供的 `transcript_path`。新会话、恢复会话和清空后的会话都只显示本次运行期间 `UserPromptSubmit` Hook 实际收到的新提示词；上下文压缩保留本次运行已经显示的记录。
+Prompt Pane 不搜索 `~/.codex/sessions`、不读取 Codex App Server 历史，也不按时间、目录或进程猜测会话。新会话、恢复会话和清空后的会话都只显示本次运行期间 `UserPromptSubmit` Hook 实际收到的新提示词；上下文压缩保留本次运行已经显示的记录。`Stop` Hook 可以按官方提供的准确 `session_id` 与 `transcript_path` 只读解析当前会话的结构化 usage 元数据，但不得读取或保留 prompt、回复、推理和工具内容。
 
 ## 组件与依赖方向
 
@@ -57,7 +57,7 @@ created -> workspace_started -> session_bound -> live -> ended
 
 ## IPC 协议
 
-Windows `v1.0.0` 使用当前用户命名管道；其他平台接口保留但不承诺可用。每次运行使用不可预测 endpoint 和至少 256-bit token。Hook 原始输入上限为 1 MiB，认证 IPC frame 上限为 8 MiB，为 JSON 转义保留空间；超限只返回不含 payload 的安全错误。
+Windows `v1.1.0` 使用当前用户命名管道；其他平台接口保留但不承诺可用。每次运行使用不可预测 endpoint 和至少 256-bit token。Hook 原始输入上限为 1 MiB，认证 IPC frame 上限为 8 MiB，为 JSON 转义保留空间；超限只返回不含 payload 的安全错误。
 
 每个请求为有上限的 JSON frame：
 
@@ -72,18 +72,21 @@ version | run_id | token | type | event?
 - `session.started`：规范化 `session_id` 与 `source`。
 - `prompt.submitted`：`session_id`、`turn_id`、完整 prompt。
 - `session.ended`：`session_id`。
+- `metrics.updated`：`session_id` 与可空的累计 token、上下文窗口、5h／7d 限额、模型、推理强度及项目 Git 状态。
 
 server 必须验证版本、大小、token、`run_id`、事件字段和会话绑定。认证失败、超限或状态转换非法时拒绝消息，错误不得包含 payload。
 
 ## Codex Hook
 
-插件包含 `SessionStart`、`UserPromptSubmit` 和 `SessionEnd` command hooks。Hook 进程必须：
+插件包含 `SessionStart`、`UserPromptSubmit`、`Stop` 和 `SessionEnd` command hooks。Hook 进程必须：
 
 1. 从标准输入读取单个有界 JSON 对象。
 2. 验证 `hook_event_name`、`session_id` 和事件特有字段。
 3. 从继承环境读取本次 endpoint、`run_id` 与 token。
 4. 通过 IPC 发送规范化事件。
 5. 成功时不向 stdout 写 prompt 或额外上下文。
+
+`Stop` Hook 只按本次 payload 的准确 `transcript_path` 逐行筛选 `session_meta`、`turn_context` 和 `token_count`；不提供最近文件回退，不把路径、原始行或内容字段送入 IPC。指标解析失败时静默跳过本次更新并保持 Codex 可用。
 
 Hook 故障不得阻止用户 prompt。非托管 Hook 需要 Codex 信任；程序只能引导用户通过 `/hooks` 审查，禁止绕过信任。
 

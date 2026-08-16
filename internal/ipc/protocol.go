@@ -20,7 +20,8 @@ type Response struct {
 }
 
 type Snapshot struct {
-	State   string                `json:"state"`
-	Prompts []provider.UserPrompt `json:"prompts"`
-	Notice  string                `json:"notice"`
+	State   string                   `json:"state"`
+	Prompts []provider.UserPrompt    `json:"prompts"`
+	Notice  string                   `json:"notice"`
+	Metrics *provider.SessionMetrics `json:"metrics,omitempty"`
 }

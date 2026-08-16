@@ -208,6 +208,30 @@ func TestResumeRebindClearsPromptsAndIgnoresStaleEvents(t *testing.T) {
 	}
 }
 
+func TestMetricsFollowSessionResetRules(t *testing.T) {
+	run, err := runcontext.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(run)
+	metrics := &provider.SessionMetrics{Model: "gpt-5.4", TotalTokens: 100}
+	server.apply(provider.Event{Kind: provider.SessionStarted, SessionID: "one", Source: provider.SessionSourceStartup})
+	if !server.apply(provider.Event{Kind: provider.MetricsUpdated, SessionID: "one", Metrics: metrics}) || server.snapshotLocked().Metrics == nil {
+		t.Fatal("current-session metrics were not accepted")
+	}
+	server.apply(provider.Event{Kind: provider.SessionStarted, SessionID: "one", Source: provider.SessionSourceCompact})
+	if server.snapshotLocked().Metrics == nil {
+		t.Fatal("compact discarded current metrics")
+	}
+	server.apply(provider.Event{Kind: provider.SessionStarted, SessionID: "two", Source: provider.SessionSourceResume})
+	if server.snapshotLocked().Metrics != nil {
+		t.Fatal("resume retained old metrics")
+	}
+	if !server.apply(provider.Event{Kind: provider.MetricsUpdated, SessionID: "one", Metrics: metrics}) || server.snapshotLocked().Metrics != nil {
+		t.Fatal("stale metrics changed the active snapshot")
+	}
+}
+
 func TestServerBroadcastsSameSessionResumeReset(t *testing.T) {
 	run, err := runcontext.New()
 	if err != nil {
