@@ -89,8 +89,7 @@ codex.pp resume
 | 折叠全部长提示词 | `c` |
 | 打开帮助 | `h` |
 | 关闭帮助 | `h` 或 `Esc` |
-| 从帮助页打开主题设置 | `t` |
-| 预览／保存／取消主题 | `↑`／`↓`、`Enter`、`Esc` |
+| 在帮助页预览／保存主题 | `←`／`→`、`Enter` |
 | 关闭右侧 viewer | `Ctrl+X` |
 | 选择提示词 | 左键单击 |
 | 选择并复制可见文字 | 按住左键拖动，松开后复制 |
@@ -99,9 +98,9 @@ codex.pp resume
 
 ### 状态栏与主题
 
-每次 Codex 回答完成后，viewer 会更新当前会话的累计 token、上下文占用、5 小时／7 天限额、模型以及宽度允许时的项目 Git 状态。指标不可用时会隐藏，不用 `0` 代替未知值。
+每次 Codex 回答完成后，viewer 会更新当前会话的累计 token、上下文占用、5 小时／7 天限额、模型以及宽度允许时的 Git 分支状态。默认 70/30 窗格保留 Token Tracker 同款进度条，窄栏拆行、宽栏合并；指标不可用时会隐藏，不用 `0` 代替未知值。
 
-内置主题为 `mocha`、`latte`、`frappe`、`macchiato`、`nord` 和 `dracula`，色值与语义映射来自 Token Tracker。默认 `auto` 会在可确认浅色背景时使用 `latte`，否则使用 `mocha`。在帮助页按 `t` 可实时预览并保存；也可用 `PROMPT_PANE_THEME` 临时覆盖。`NO_COLOR` 会关闭颜色。
+内置主题为 `mocha`、`latte`、`frappe`、`macchiato`、`nord` 和 `dracula`，色值与语义映射来自 Token Tracker。默认 `auto` 会在可确认浅色背景时使用 `latte`，否则使用 `mocha`。帮助页直接列出主题及对应色板，使用 `←`／`→` 实时预览并以 `Enter` 保存；也可用 `PROMPT_PANE_THEME` 临时覆盖。`NO_COLOR` 会关闭颜色。
 
 ## 会话行为
 

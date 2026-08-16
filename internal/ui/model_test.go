@@ -302,16 +302,16 @@ func TestCompactHelpScrollsWithoutChangingPromptReadingState(t *testing.T) {
 		}
 		updated, _ := model.Update(tea.KeyPressMsg{Code: 'h'})
 		model = updated.(Model)
-		if strings.Contains(model.render(), "Fold all") {
+		if strings.Contains(model.render(), "dracula") {
 			t.Fatalf("%dx%d help unexpectedly fit without scrolling", size[0], size[1])
 		}
 
-		for range 2 {
+		for range 10 {
 			updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
 			model = updated.(Model)
 		}
-		if model.helpOffset == 0 || !strings.Contains(model.render(), "Fold all") {
-			t.Fatalf("%dx%d help did not reach the final action: %q", size[0], size[1], model.render())
+		if model.helpOffset == 0 || !strings.Contains(model.render(), "dracula") {
+			t.Fatalf("%dx%d help did not reach the embedded theme palettes: %q", size[0], size[1], model.render())
 		}
 		previousOffset := model.helpOffset
 		updated, _ = model.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
@@ -427,33 +427,33 @@ func TestMouseDragUsesExplicitColorsForWideSelection(t *testing.T) {
 	}
 }
 
-func TestThemePickerPreviewsAndCancelsSelection(t *testing.T) {
-	model := Model{width: 48, height: 20, noColor: true, showHelp: true, themeName: theme.Mocha, themeSource: config.ThemeConfig}
+func TestHelpPreviewsAndCancelsThemeSelection(t *testing.T) {
+	model := Model{width: 48, height: 20, noColor: true, themeName: theme.Mocha, themeSource: config.ThemeConfig}
 	model.applyTheme(theme.Mocha)
-	updated, _ := model.Update(tea.KeyPressMsg{Code: 't'})
+	updated, _ := model.Update(tea.KeyPressMsg{Code: 'h'})
 	model = updated.(Model)
-	if !model.showTheme || !strings.Contains(model.render(), "mocha") {
-		t.Fatalf("theme picker did not open: %q", model.render())
+	if !model.showHelp || !strings.Contains(model.render(), "mocha") || !strings.Contains(model.render(), "●●●●●●") {
+		t.Fatalf("help did not embed theme palettes: %q", model.render())
 	}
-	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyRight})
 	model = updated.(Model)
 	if model.themeName != theme.Latte || model.colors.Success != "#40a02b" {
 		t.Fatalf("theme preview = %q %#v", model.themeName, model.colors)
 	}
 	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	model = updated.(Model)
-	if model.showTheme || model.themeName != theme.Mocha {
+	if model.showHelp || model.themeName != theme.Mocha {
 		t.Fatalf("theme cancel did not restore original: %#v", model)
 	}
 }
 
-func TestThemePickerSavesSelection(t *testing.T) {
+func TestHelpSavesThemeSelection(t *testing.T) {
 	t.Setenv(paths.EnvHome, t.TempDir())
-	model := Model{width: 48, height: 20, noColor: true, showHelp: true, themeName: theme.Mocha, themeSource: config.ThemeConfig}
+	model := Model{width: 48, height: 20, noColor: true, themeName: theme.Mocha, themeSource: config.ThemeConfig}
 	model.applyTheme(theme.Mocha)
-	updated, _ := model.Update(tea.KeyPressMsg{Code: 't'})
+	updated, _ := model.Update(tea.KeyPressMsg{Code: 'h'})
 	model = updated.(Model)
-	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyRight})
 	model = updated.(Model)
 	updated, command := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	model = updated.(Model)
@@ -463,8 +463,8 @@ func TestThemePickerSavesSelection(t *testing.T) {
 	updated, _ = model.Update(command())
 	model = updated.(Model)
 	name, source, err := config.LoadTheme()
-	if err != nil || name != theme.Latte || source != config.ThemeConfig || model.showTheme {
-		t.Fatalf("saved theme = %q, source = %q, picker = %v, err = %v", name, source, model.showTheme, err)
+	if err != nil || name != theme.Latte || source != config.ThemeConfig || !model.showHelp || model.themeMessage != "Theme saved" {
+		t.Fatalf("saved theme = %q, source = %q, help = %v, message = %q, err = %v", name, source, model.showHelp, model.themeMessage, err)
 	}
 }
 
@@ -474,9 +474,77 @@ func TestStatusLineUsesThemeRolesAndFitsWidth(t *testing.T) {
 		FiveHour: &provider.QuotaWindow{UsedPercent: 75}, SevenDay: &provider.QuotaWindow{UsedPercent: 92},
 	}}}
 	model.applyTheme(theme.Dracula)
-	lines := model.renderStatusLines()
-	if ansi.StringWidth(lines[0]) > model.width || ansi.StringWidth(lines[1]) > model.width || !strings.Contains(lines[1], "\x1b[38;2;255;85;85m") {
+	lines := model.renderStatusBlock(4)
+	output := strings.Join(lines, "\n")
+	for _, line := range lines {
+		if ansi.StringWidth(line) > model.width {
+			t.Fatalf("status line exceeded width: %q", lines)
+		}
+	}
+	if !strings.Contains(output, "\x1b[38;2;255;85;85m") || !strings.Contains(output, "\x1b[48;2;") || strings.Contains(output, "prompt-pane") {
 		t.Fatalf("status lines do not fit or use Dracula danger color: %q", lines)
+	}
+}
+
+func TestDefaultStatusKeepsTokenTrackerBarsAndWideStatusCompresses(t *testing.T) {
+	metrics := &provider.SessionMetrics{
+		Project: "prompt-pane", Branch: "main", Model: "gpt-5", TotalTokens: 23000,
+		ContextWindow: 258000, ContextUsedPercent: 9,
+		FiveHour: &provider.QuotaWindow{UsedPercent: 21}, SevenDay: &provider.QuotaWindow{UsedPercent: 44},
+	}
+	narrow := Model{width: 48, height: 20, snapshot: ipc.Snapshot{State: "live", Metrics: metrics}}
+	narrow.applyTheme(theme.Mocha)
+	narrowLines := narrow.renderStatusBlock(4)
+	narrowOutput := strings.Join(narrowLines, "\n")
+	plain := ansi.Strip(narrowOutput)
+	if !strings.Contains(plain, "[LIVE] (main)") || strings.Contains(plain, "prompt-pane") || !strings.Contains(narrowOutput, "\x1b[48;2;") {
+		t.Fatalf("default status lost branch placement or Token Tracker bars: %q", narrowLines)
+	}
+	for _, width := range []int{24, 32, 48} {
+		model := narrow
+		model.width = width
+		output := strings.Join(model.renderStatusBlock(4), "\n")
+		if !strings.Contains(output, "\x1b[48;2;") {
+			t.Fatalf("width=%d dropped progress bars too early: %q", width, output)
+		}
+	}
+
+	wide := narrow
+	wide.width = 80
+	wideLines := wide.renderStatusBlock(4)
+	if len(wideLines) >= len(narrowLines) {
+		t.Fatalf("wide status did not compress rows: narrow=%q wide=%q", narrowLines, wideLines)
+	}
+}
+
+func TestEnvironmentThemeCanPreviewButNotSave(t *testing.T) {
+	model := Model{width: 48, height: 20, noColor: true, themeName: theme.Mocha, themeSource: config.ThemeEnvironment}
+	model.applyTheme(theme.Mocha)
+	updated, _ := model.Update(tea.KeyPressMsg{Code: 'h'})
+	model = updated.(Model)
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	model = updated.(Model)
+	updated, command := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	model = updated.(Model)
+	if command != nil || model.themeMessage != theme.Environment+" is active" {
+		t.Fatalf("environment theme was saveable or missed its source: %#v", model)
+	}
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	model = updated.(Model)
+	if model.showHelp || model.themeName != theme.Mocha {
+		t.Fatalf("environment preview was not canceled: %#v", model)
+	}
+}
+
+func TestThemeColorsStatusIndexAndHelpAction(t *testing.T) {
+	model := Model{width: 48, height: 12, selectedID: "two", snapshot: ipc.Snapshot{State: "live", Prompts: []provider.UserPrompt{{ID: "one", Text: "first"}, {ID: "two", Text: "second"}}}}
+	model.applyTheme(theme.Dracula)
+	output := model.render()
+	palette := theme.Resolve(theme.Dracula, false)
+	state := lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Green)).Render("[LIVE]")
+	accent := lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Sapphire))
+	if !strings.Contains(output, state) || !strings.Contains(output, accent.Render("  1 ")) || !strings.Contains(output, accent.Render("h help ")) {
+		t.Fatalf("theme roles were not shared by state, index and help action: %q", output)
 	}
 }
 

@@ -66,7 +66,6 @@ type Model struct {
 	selectedID      string
 	expanded        map[string]bool
 	showHelp        bool
-	showTheme       bool
 	helpOffset      int
 	themeName       string
 	themeSource     config.ThemeSource
@@ -125,32 +124,25 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		if m.showHelp {
-			if m.showTheme {
-				switch key {
-				case "up", "k":
-					m.moveTheme(-1)
-				case "down", "j":
-					m.moveTheme(1)
-				case "enter":
-					if m.themeSource == config.ThemeEnvironment {
-						m.themeMessage = theme.Environment + " is active"
-						return m, nil
-					}
-					name := theme.Names()[m.themeIndex]
-					return m, saveTheme(name)
-				case "esc", "h", "t":
-					m.applyTheme(m.themeOriginal)
-					m.showTheme = false
-					m.themeMessage = ""
-				}
-				return m, nil
-			}
 			switch key {
 			case "h", "esc":
+				m.applyTheme(m.themeOriginal)
 				m.showHelp = false
 				m.helpOffset = 0
-			case "t":
-				m.openThemePicker()
+				m.themeMessage = ""
+			case "left":
+				m.moveTheme(-1)
+				m.revealHelpTheme()
+			case "right":
+				m.moveTheme(1)
+				m.revealHelpTheme()
+			case "enter":
+				if m.themeSource == config.ThemeEnvironment {
+					m.themeMessage = theme.Environment + " is active"
+					return m, nil
+				}
+				name := theme.Names()[m.themeIndex]
+				return m, saveTheme(name)
 			case "up":
 				m.scrollHelp(-1)
 			case "down":
@@ -166,6 +158,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		case "h":
 			m.showHelp = true
 			m.helpOffset = 0
+			m.beginThemePreview()
 		case "up", "k":
 			m.moveSelection(-1)
 		case "down", "j":
@@ -267,8 +260,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.themeName = msg.name
 		m.themeSource = config.ThemeConfig
 		m.applyTheme(msg.name)
-		m.showTheme = false
-		m.themeMessage = ""
+		m.themeOriginal = msg.name
+		m.themeMessage = "Theme saved"
 	case themeSaveFailedMsg:
 		m.applyTheme(m.themeOriginal)
 		m.themeMessage = "Could not save theme: " + msg.err.Error()
@@ -318,8 +311,7 @@ func (m *Model) applyTheme(name string) {
 	m.colors = theme.Derive(theme.Resolve(name, m.lightBackground))
 }
 
-func (m *Model) openThemePicker() {
-	m.showTheme = true
+func (m *Model) beginThemePreview() {
 	m.themeOriginal = m.themeName
 	m.themeMessage = ""
 	for index, name := range theme.Names() {
@@ -335,6 +327,26 @@ func (m *Model) moveTheme(delta int) {
 	m.themeIndex = (m.themeIndex + delta + len(names)) % len(names)
 	m.applyTheme(names[m.themeIndex])
 	m.themeMessage = ""
+}
+
+func (m *Model) revealHelpTheme() {
+	selected := -1
+	for index, line := range m.helpLines() {
+		if strings.Contains(ansi.Strip(line), "› "+m.themeName) {
+			selected = index
+			break
+		}
+	}
+	if selected < 0 {
+		return
+	}
+	height := m.bodyHeight()
+	if selected < m.helpOffset {
+		m.helpOffset = selected
+	} else if selected >= m.helpOffset+height {
+		m.helpOffset = selected - height + 1
+	}
+	m.clampHelpOffset()
 }
 
 func (m *Model) scroll(delta int) {
@@ -613,9 +625,9 @@ func (m Model) bodyHeight() int {
 		}
 	} else if m.snapshot.Metrics != nil {
 		if m.height >= 10 {
-			height -= 4
+			height -= len(m.renderStatusBlock(4)) + 1
 		} else if m.height >= 6 {
-			height -= 3
+			height -= len(m.renderStatusBlock(3))
 		} else if m.height >= 3 {
 			height--
 		}
@@ -656,11 +668,10 @@ func (m Model) render() string {
 	if m.showHelp && m.height >= 3 {
 		lines = append(lines, m.renderFooter(m.height < 8))
 	} else if m.snapshot.Metrics != nil && m.height >= 10 {
-		status := m.renderStatusLines()
-		lines = append(lines, "", status[0], status[1], m.renderFooter(false))
+		lines = append(lines, "")
+		lines = append(lines, m.renderStatusBlock(4)...)
 	} else if m.snapshot.Metrics != nil && m.height >= 6 {
-		status := m.renderStatusLines()
-		lines = append(lines, status[0], status[1], m.renderFooter(true))
+		lines = append(lines, m.renderStatusBlock(3)...)
 	} else if m.height >= 8 {
 		lines = append(lines, "", m.renderFooter(false))
 	} else if m.height >= 3 {
@@ -672,11 +683,7 @@ func (m Model) render() string {
 func (m Model) visibleBodyLines() []string {
 	body := m.bodyLines()
 	start := m.offset
-	if m.showTheme {
-		body = m.themeLines()
-		selectedLine := 3 + m.themeIndex
-		start = max(0, selectedLine-m.bodyHeight()+1)
-	} else if m.showHelp {
+	if m.showHelp {
 		body = m.helpLines()
 		start = m.helpOffset
 	}
@@ -720,15 +727,10 @@ func (m Model) renderFooter(compactHeight bool) string {
 	if m.snapshot.State == "ready" && m.width >= 32 {
 		actions = "h troubleshoot"
 	}
-	if m.showTheme {
-		actions = "↑↓ preview · Enter save · Esc cancel"
+	if m.showHelp {
+		actions = "←→ theme · Enter save · Esc close"
 		if compactHeight || m.width < 44 {
-			actions = "↑↓ · Enter · Esc"
-		}
-	} else if m.showHelp {
-		actions = "↑↓ scroll · Esc close"
-		if compactHeight || m.width < 32 {
-			actions = "↑↓ · Esc"
+			actions = "←→ · Enter · Esc"
 		}
 	} else if m.snapshot.Metrics != nil && m.height < 6 {
 		actions = m.compactMetrics()
@@ -738,7 +740,7 @@ func (m Model) renderFooter(compactHeight bool) string {
 			actions = fmt.Sprintf("%d new · End", m.newCount)
 		}
 	}
-	right := m.styleMuted(actions + " ")
+	right := m.styleAction(actions + " ")
 	gap := m.width - ansi.StringWidth(left) - ansi.StringWidth(right)
 	if gap < 1 {
 		right = ""
@@ -797,7 +799,6 @@ func (m Model) helpLines() []string {
 			" Enter   Expand/fold",
 			" Drag    Copy text",
 			" c       Fold all",
-			" t       Theme",
 		)
 	} else {
 		entries = append(entries,
@@ -811,57 +812,104 @@ func (m Model) helpLines() []string {
 			helpEntry("Enter", "Expand or fold"),
 			helpEntry("Drag", "Copy visible text"),
 			helpEntry("c", "Fold all"),
-			helpEntry("t", "Choose theme"),
 		)
 	}
-	entries = append(entries, "", " Theme: "+m.themeName)
 	for index := range entries {
 		entries[index] = m.styleMuted(entries[index])
 	}
-	return entries
-}
-
-func (m Model) themeLines() []string {
-	lines := []string{" Theme", "", " Choose a global color theme:"}
+	entries = append(entries, "", m.styleMuted(" Theme  ←/→ preview · Enter save"))
 	for index, name := range theme.Names() {
 		marker := "  "
 		if index == m.themeIndex {
 			marker = "› "
 		}
-		label := marker + name
+		label := fmt.Sprintf(" %-10s", marker+name)
 		if m.noColor {
 			if index == m.themeIndex {
 				label = lipgloss.NewStyle().Bold(true).Render(label)
 			}
 		} else {
-			palette := theme.Resolve(name, m.lightBackground)
-			label = lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Sapphire)).Render(label)
+			label = m.styleColor(label, m.visualRoles().Accent)
 		}
-		lines = append(lines, " "+label)
+		entries = append(entries, label+m.themeSwatches(name))
 	}
 	if m.themeSource == config.ThemeEnvironment {
-		lines = append(lines, "", m.styleWarning(" "+theme.Environment+" overrides saved settings"))
+		entries = append(entries, "", m.styleWarning(" "+theme.Environment+" overrides saved settings"))
 	} else if m.themeMessage != "" {
-		lines = append(lines, "", m.styleWarning(" "+m.themeMessage))
+		entries = append(entries, "", m.styleWarning(" "+m.themeMessage))
 	}
-	return lines
+	return entries
+}
+
+func (m Model) themeSwatches(name string) string {
+	palette := theme.Resolve(name, m.lightBackground)
+	colors := []string{palette.Green, palette.Yellow, palette.Peach, palette.Red, palette.Sapphire, palette.Mauve}
+	if m.noColor {
+		return " ●●●●●●"
+	}
+	var swatches strings.Builder
+	swatches.WriteString(" ")
+	for _, color := range colors {
+		swatches.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render("●"))
+	}
+	return swatches.String()
 }
 
 func helpEntry(key, description string) string {
 	return fmt.Sprintf(" %-9s  %s", key, description)
 }
 
-func (m Model) renderStatusLines() [2]string {
-	if m.snapshot.Metrics == nil || m.width < 24 {
-		return [2]string{}
+func (m Model) renderStatusBlock(maxLines int) []string {
+	if m.snapshot.Metrics == nil || maxLines < 1 {
+		return nil
 	}
+	if maxLines == 1 {
+		return []string{m.renderFooter(true)}
+	}
+	lines := []string{m.renderStatusHeader()}
+	remaining := maxLines - 1
+	rows := m.renderMetricRows(10, true)
+	if !statusRowsFit(rows, remaining, m.width) {
+		rows = m.renderMetricRows(10, false)
+	}
+	if !statusRowsFit(rows, remaining, m.width) {
+		rows = m.renderMetricRows(6, false)
+	}
+	if !statusRowsFit(rows, remaining, m.width) {
+		rows = m.renderMetricRows(0, false)
+	}
+	if len(rows) > remaining {
+		rows = rows[:remaining]
+	}
+	for index := range rows {
+		rows[index] = ansi.Truncate(rows[index], m.width, "")
+	}
+	return append(lines, rows...)
+}
+
+func statusRowsFit(rows []string, maxLines, width int) bool {
+	if len(rows) > maxLines {
+		return false
+	}
+	for _, row := range rows {
+		if ansi.StringWidth(row) > width {
+			return false
+		}
+	}
+	return true
+}
+
+func (m Model) renderStatusHeader() string {
 	metrics := m.snapshot.Metrics
-	colors := m.visualRoles()
 	available := max(1, m.width-1)
-	project := m.renderProject(metrics)
+	right := ""
+	if m.width >= 40 {
+		right = m.styleAction("h help")
+	}
+	state := m.styleState("[" + stateLabel(m.snapshot.State) + "]")
 	total := ""
 	if metrics.TotalTokens > 0 {
-		total = m.styleColor("Total: "+compactNumber(metrics.TotalTokens), colors.Token)
+		total = m.styleColor("Total: "+compactNumber(metrics.TotalTokens), m.visualRoles().Token)
 	}
 	model := ""
 	if metrics.Model != "" {
@@ -869,116 +917,140 @@ func (m Model) renderStatusLines() [2]string {
 		if metrics.Effort != "" {
 			label += " " + metrics.Effort
 		}
-		model = m.styleColor("Model: "+label, colors.Error)
+		model = m.styleColor("Model: "+label, m.visualRoles().Model)
 	}
-	line1 := fitStatusPieces(available, []string{project, total, model}, []int{2, 0})
-
-	line2 := m.renderLimitLine(true, true)
-	if ansi.StringWidth(line2) > available {
-		line2 = m.renderLimitLine(false, true)
+	leftAvailable := available
+	if right != "" {
+		leftAvailable -= ansi.StringWidth(right) + 1
 	}
-	if ansi.StringWidth(line2) > available {
-		line2 = m.renderLimitLine(false, false)
+	branch := m.renderBranch(metrics, true)
+	left := joinStatusPieces(state+branch, total, model)
+	if ansi.StringWidth(left) > leftAvailable {
+		left = joinStatusPieces(state+branch, total)
 	}
-	if ansi.StringWidth(line2) > available {
-		line2 = ansi.Truncate(line2, available, "")
+	if ansi.StringWidth(left) > leftAvailable {
+		branch = m.renderBranch(metrics, false)
+		left = joinStatusPieces(state+branch, total)
 	}
-	return [2]string{prefixStatus(line1), prefixStatus(line2)}
+	if ansi.StringWidth(left) > leftAvailable {
+		left = joinStatusPieces(state, total)
+	}
+	if ansi.StringWidth(left) > leftAvailable && right != "" {
+		right = ""
+		leftAvailable = available
+		left = joinStatusPieces(state, total)
+	}
+	left = ansi.Truncate(left, leftAvailable, "")
+	if right == "" {
+		return prefixStatus(left)
+	}
+	gap := max(1, available-ansi.StringWidth(left)-ansi.StringWidth(right))
+	return prefixStatus(left + strings.Repeat(" ", gap) + right)
 }
 
-func (m Model) renderProject(metrics *provider.SessionMetrics) string {
-	if metrics.Project == "" {
+func joinStatusPieces(pieces ...string) string {
+	filtered := make([]string, 0, len(pieces))
+	for _, piece := range pieces {
+		if piece != "" {
+			filtered = append(filtered, piece)
+		}
+	}
+	return strings.Join(filtered, " | ")
+}
+
+func (m Model) renderBranch(metrics *provider.SessionMetrics, details bool) string {
+	if metrics == nil || metrics.Branch == "" {
 		return ""
 	}
 	colors := m.visualRoles()
-	project := m.styleColor("["+metrics.Project+"]", colors.Project)
-	if !m.noColor {
-		project = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colors.Project)).Render("[" + metrics.Project + "]")
+	branch := m.styleColor(metrics.Branch, colors.Branch)
+	if details {
+		if metrics.Added > 0 {
+			branch += " " + m.styleColor(fmt.Sprintf("+%d", metrics.Added), colors.Added)
+		}
+		if metrics.Deleted > 0 {
+			branch += " " + m.styleColor(fmt.Sprintf("-%d", metrics.Deleted), colors.Deleted)
+		}
+		if metrics.Untracked > 0 {
+			branch += " " + m.styleColor(fmt.Sprintf("?%d", metrics.Untracked), colors.Untracked)
+		}
 	}
-	if metrics.Branch == "" {
-		return project
-	}
-	git := m.styleColor(metrics.Branch, colors.Branch)
-	if metrics.Added > 0 {
-		git += " " + m.styleColor(fmt.Sprintf("+%d", metrics.Added), colors.Added)
-	}
-	if metrics.Deleted > 0 {
-		git += " " + m.styleColor(fmt.Sprintf("-%d", metrics.Deleted), colors.Deleted)
-	}
-	if metrics.Untracked > 0 {
-		git += " " + m.styleColor(fmt.Sprintf("?%d", metrics.Untracked), colors.Untracked)
-	}
-	return project + "(" + git + ")"
+	return " (" + branch + ")"
 }
 
-func (m Model) renderLimitLine(bars, contextVisible bool) string {
+func (m Model) renderMetricRows(barWidth int, resetVisible bool) []string {
+	pieces := m.renderMetricPieces(barWidth, resetVisible)
+	if len(pieces) == 0 {
+		return nil
+	}
+	available := max(1, m.width-1)
+	rows := make([]string, 0, len(pieces))
+	current := ""
+	for _, piece := range pieces {
+		candidate := piece
+		if current != "" {
+			candidate = current + " | " + piece
+		}
+		if current != "" && ansi.StringWidth(candidate) > available {
+			rows = append(rows, prefixStatus(current))
+			current = piece
+		} else {
+			current = candidate
+		}
+	}
+	if current != "" {
+		rows = append(rows, prefixStatus(current))
+	}
+	return rows
+}
+
+func (m Model) renderMetricPieces(barWidth int, resetVisible bool) []string {
 	metrics := m.snapshot.Metrics
 	if metrics == nil {
-		return ""
+		return nil
 	}
 	colors := m.visualRoles()
 	pieces := make([]string, 0, 3)
 	if metrics.FiveHour != nil {
-		pieces = append(pieces, m.renderQuota("5h", metrics.FiveHour, bars))
+		pieces = append(pieces, m.renderQuota("5h", metrics.FiveHour, barWidth, resetVisible))
 	}
 	if metrics.SevenDay != nil {
-		pieces = append(pieces, m.renderQuota("7d", metrics.SevenDay, bars))
+		pieces = append(pieces, m.renderQuota("7d", metrics.SevenDay, barWidth, resetVisible))
 	}
-	if contextVisible && metrics.ContextUsedPercent > 0 {
+	if metrics.ContextUsedPercent > 0 {
 		label := "Ctx"
 		if metrics.ContextWindow > 0 {
 			label = compactNumber(metrics.ContextWindow) + " Ctx"
 		}
-		pieces = append(pieces, m.styleColor(label+" ", colors.Label)+m.renderPercent(metrics.ContextUsedPercent, bars))
+		pieces = append(pieces, m.styleColor(label+": ", colors.Label)+m.renderPercent(metrics.ContextUsedPercent, barWidth))
 	}
 	if len(pieces) > 0 && (metrics.FiveHour != nil || metrics.SevenDay != nil) {
 		pieces[0] = m.styleColor("Limit: ", colors.Label) + pieces[0]
 	}
-	return strings.Join(pieces, " | ")
+	return pieces
 }
 
-func (m Model) renderQuota(label string, quota *provider.QuotaWindow, bars bool) string {
-	text := m.styleColor(label+" ", m.visualRoles().Label) + m.renderPercent(quota.UsedPercent, bars)
-	if bars && quota.ResetsAt > time.Now().Unix() && m.width >= 100 {
-		text += m.styleMuted(" (reset " + formatDuration(quota.ResetsAt-time.Now().Unix()) + ")")
+func (m Model) renderQuota(label string, quota *provider.QuotaWindow, barWidth int, resetVisible bool) string {
+	text := m.styleColor(label+": ", m.visualRoles().Label) + m.renderPercent(quota.UsedPercent, barWidth)
+	if resetVisible && quota.ResetsAt > time.Now().Unix() {
+		text += m.styleMuted(" (" + formatDuration(quota.ResetsAt-time.Now().Unix()) + ")")
 	}
 	return text
 }
 
-func (m Model) renderPercent(percent float64, bars bool) string {
+func (m Model) renderPercent(percent float64, barWidth int) string {
 	percent = max(0, min(100, percent))
 	color := quotaColor(percent, m.visualRoles())
-	if !bars {
+	if barWidth <= 0 {
 		return m.styleColor(fmt.Sprintf("%.0f%%", percent), color)
 	}
-	const width = 8
-	filled := int(percent/100*width + 0.5)
-	bar := m.styleColor(strings.Repeat("█", filled), color)
-	empty := strings.Repeat("░", width-filled)
-	if percent > 0 {
-		empty = m.styleColor(empty, color)
+	filled := int(percent/100*float64(barWidth) + 0.5)
+	bar := strings.Repeat("█", filled)
+	if !m.noColor && filled > 0 {
+		bar = lipgloss.NewStyle().Background(lipgloss.Color(color)).Render(strings.Repeat(" ", filled))
 	}
+	empty := m.styleColor(strings.Repeat("░", barWidth-filled), color)
 	return bar + empty + " " + m.styleColor(fmt.Sprintf("%.0f%%", percent), color)
-}
-
-func fitStatusPieces(width int, pieces []string, removalOrder []int) string {
-	active := append([]string(nil), pieces...)
-	join := func() string {
-		filtered := make([]string, 0, len(active))
-		for _, piece := range active {
-			if piece != "" {
-				filtered = append(filtered, piece)
-			}
-		}
-		return strings.Join(filtered, " | ")
-	}
-	for _, index := range removalOrder {
-		if ansi.StringWidth(join()) <= width {
-			break
-		}
-		active[index] = ""
-	}
-	return ansi.Truncate(join(), width, "")
 }
 
 func prefixStatus(line string) string {
@@ -1059,6 +1131,10 @@ func (m Model) styleMuted(text string) string {
 	return lipgloss.NewStyle().Foreground(lipgloss.Color(m.visualRoles().Muted)).Render(text)
 }
 
+func (m Model) styleAction(text string) string {
+	return m.styleColor(text, m.visualRoles().Accent)
+}
+
 func (m Model) styleSelected(text string) string {
 	style := lipgloss.NewStyle().Bold(m.noColor)
 	if !m.noColor {
@@ -1135,7 +1211,7 @@ func (m Model) layoutBody() bodyLayout {
 			if lineIndex == summaryLine {
 				line = m.styleMuted(line)
 			}
-			layout.lines = append(layout.lines, m.styleMuted(prefix)+line)
+			layout.lines = append(layout.lines, m.styleAction(prefix)+line)
 		}
 		layout.prompts = append(layout.prompts, promptRange{start: start, end: len(layout.lines), long: isLong})
 	}
