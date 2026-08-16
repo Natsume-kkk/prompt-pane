@@ -1,0 +1,27 @@
+{
+  "name": "prompt-pane",
+  "version": "1.0.0",
+  "description": "Streams the current Codex session's user prompts to the local Prompt Pane viewer.",
+  "author": {
+    "name": "Natsume"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "codex",
+    "prompt-history",
+    "terminal"
+  ],
+  "interface": {
+    "displayName": "Prompt Pane",
+    "shortDescription": "Show this session's prompts in a companion pane.",
+    "longDescription": "Sends Codex lifecycle events to the authenticated local Prompt Pane process. It does not add model context or send prompt content over the network.",
+    "developerName": "Natsume",
+    "category": "Productivity",
+    "capabilities": [
+      "Local integration"
+    ],
+    "defaultPrompt": [
+      "Help me verify that Prompt Pane is connected to this Codex session."
+    ]
+  }
+}

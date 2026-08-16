@@ -1,0 +1,7 @@
+{
+  "session_id": "thr_synthetic",
+  "transcript_path": "C:\\synthetic\\rollout.jsonl",
+  "cwd": "C:\\synthetic",
+  "hook_event_name": "SessionEnd",
+  "reason": "synthetic-test"
+}

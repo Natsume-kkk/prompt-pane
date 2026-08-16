@@ -1,0 +1,42 @@
+{
+  "description": "Send this Codex session's prompt lifecycle to the authenticated local Prompt Pane process.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "^(startup|resume|clear|compact)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "prompt-pane _hook codex",
+            "commandWindows": "& \"${PLUGIN_ROOT}/bin/prompt-pane.exe\" _hook codex; exit $LASTEXITCODE",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "prompt-pane _hook codex",
+            "commandWindows": "& \"${PLUGIN_ROOT}/bin/prompt-pane.exe\" _hook codex; exit $LASTEXITCODE",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "prompt-pane _hook codex",
+            "commandWindows": "& \"${PLUGIN_ROOT}/bin/prompt-pane.exe\" _hook codex; exit $LASTEXITCODE",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,33 @@
+# Dependencies and build output
+/bin/
+/dist/
+/prompt-pane
+/prompt-pane.exe
+*.test
+*.out
+
+# Local runtime state and generated layouts
+/.prompt-pane/
+/.tools/
+*.tmp
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Editors and AI-local configuration
+.idea/
+.vscode/
+.codex/
+.claude/
+.agents/
+
+# Local project governance and progress
+/AGENTS.md
+/ROADMAP.md
+
+# Operating systems
+.DS_Store
+Thumbs.db
+Desktop.ini

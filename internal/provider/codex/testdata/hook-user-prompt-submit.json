@@ -1,0 +1,7 @@
+{
+  "session_id": "thr_synthetic",
+  "cwd": "C:\\synthetic",
+  "hook_event_name": "UserPromptSubmit",
+  "turn_id": "turn_1",
+  "prompt": "中文\nsecond line"
+}
