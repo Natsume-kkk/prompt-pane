@@ -22,6 +22,8 @@
 irm https://raw.githubusercontent.com/Natsume-kkk/prompt-pane/main/scripts/install.ps1 | iex
 ```
 
+当前稳定版本为 [`v1.1.0`](https://github.com/Natsume-kkk/prompt-pane/releases/tag/v1.1.0)；预编译程序、SHA-256 校验文件和第三方声明统一由该 GitHub Release 提供。
+
 重复运行同一条命令即可升级。脚本会下载 Windows x64 发布物、校验 SHA-256、安装到当前用户目录并配置 Codex 集成；不需要管理员权限，也不会修改 PowerShell Profile、执行策略或系统 `PATH`。
 
 <details>
@@ -136,6 +138,8 @@ go test ./...
 go test -race ./...
 .\scripts\build.cmd
 ```
+
+Windows 本机执行 race 检查需要 CGO 可用的 C 编译器；缺少该工具链时，`go test -race ./...` 无法构建，正式发布结果以 Windows CI 的同项检查为准。
 
 - [产品规格](docs/product.md)
 - [架构规格](docs/architecture.md)

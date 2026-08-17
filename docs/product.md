@@ -41,7 +41,7 @@
 - SSH、WSL、容器和远程会话。
 - macOS／Linux 的正式支持承诺。
 
-## 后续安装体验要求
+## 安装与升级要求
 
 - GitHub 用户入口必须是一条兼容 Windows PowerShell 5.1 与 PowerShell 7 的命令；引导脚本只从项目 GitHub Release 下载 Windows x64 产物和摘要，不调用 GitHub API、不执行未校验的二进制，并支持显式固定版本。仓库、Release 或产物尚未公开时不得声称外部用户可以一键安装。
 - 引导脚本必须先下载到临时目录、校验 SHA-256，再以原子替换安装到当前用户的 Prompt Pane 数据目录；下载、校验或安装失败时保留原有可用版本。脚本不得要求管理员权限、修改 PowerShell 执行策略、Profile 或系统 `PATH`。

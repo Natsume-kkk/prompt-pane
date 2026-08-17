@@ -21,6 +21,8 @@ go test -race ./...
 .\scripts\build.cmd
 ```
 
+Windows 本机执行 race 检查需要 CGO 可用的 C 编译器。缺少工具链时必须如实记录该项未执行，不能用普通测试或远端结果冒充本机 race 通过；发布判断可引用同一提交已通过的 Windows CI。
+
 构建统一通过 `scripts\build.cmd` 执行，不直接维护另一套输出路径或 Go 缓存参数。
 
 涉及布局、输入、TUI 或终端恢复时，还必须按 `docs/product.md` 和 `docs/ui.md` 在目标环境完成相应人工验收。

@@ -2,7 +2,7 @@
 
 ## 支持范围
 
-当前维护范围为 `v1.1.0` 的 Windows x64、PowerShell、Zellij 和 Codex CLI 组合。官方预编译文件只通过本仓库的 GitHub Releases 提供；其他平台和 AI provider 不在支持范围内。
+当前维护范围为 `v1.1.0` 的 Windows x64、PowerShell、Zellij 和 Codex CLI 组合。官方预编译文件只通过本仓库的 [GitHub Releases](https://github.com/Natsume-kkk/prompt-pane/releases) 提供；安装脚本必须下载同一标签下的可执行文件与摘要，并在替换现有程序前验证 SHA-256。其他平台和 AI provider 不在支持范围内。
 
 ## 报告问题
 
