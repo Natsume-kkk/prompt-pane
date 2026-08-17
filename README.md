@@ -125,7 +125,7 @@ codex.pp
    └─ Viewer ◀── authenticated local IPC ◀── Codex Hook
 ```
 
-Zellij 负责 70/30 窗格，Bubble Tea 负责右侧 TUI。每次运行都有独立的 `run_id`、本地 endpoint 和一次性 token；Hook 事件必须与本次运行及 Codex `session_id` 精确匹配。
+Zellij 负责 70/30 窗格，Bubble Tea 负责右侧 TUI。Prompt Pane 只在本次 Zellij 会话中关闭边框悬停高亮和 resize 帮助文字，仍保留窗格边框与鼠标 resize，不修改用户全局 Zellij 配置。每次运行都有独立的 `run_id`、本地 endpoint 和一次性 token；Hook 事件必须与本次运行及 Codex `session_id` 精确匹配。
 
 ## 隐私与安全
 

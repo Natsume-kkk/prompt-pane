@@ -1172,7 +1172,7 @@ func TestFooterShowsOnlyStatusUntilNewPromptsNeedAction(t *testing.T) {
 
 func TestReadyStateRoutesTroubleshootingThroughHelp(t *testing.T) {
 	model := Model{width: 48, height: 20, noColor: true, snapshot: ipc.Snapshot{State: "ready"}}
-	if output := model.render(); strings.Contains(output, "/hooks") || !strings.Contains(output, "h troubleshoot") {
+	if output := model.render(); strings.Contains(output, "/hooks") || !strings.Contains(output, "h help") || strings.Contains(output, "h troubleshoot") {
 		t.Fatalf("ready view did not keep troubleshooting in help: %q", output)
 	}
 
@@ -1197,8 +1197,8 @@ func TestReadyTroubleshootingIsResponsive(t *testing.T) {
 		if size[0] < 32 && !strings.Contains(footer, "h help") {
 			t.Fatalf("%dx%d ready footer hid compact help: %q", size[0], size[1], footer)
 		}
-		if size[0] >= 32 && !strings.Contains(footer, "h troubleshoot") {
-			t.Fatalf("%dx%d ready footer hid troubleshooting: %q", size[0], size[1], footer)
+		if !strings.Contains(footer, "h help") || strings.Contains(footer, "h troubleshoot") {
+			t.Fatalf("%dx%d ready footer did not keep the stable help entry: %q", size[0], size[1], footer)
 		}
 
 		updated, _ := model.Update(tea.KeyPressMsg{Code: 'h'})

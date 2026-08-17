@@ -722,9 +722,6 @@ func (m Model) renderFooter(compactHeight bool) string {
 	}
 
 	actions := "h help"
-	if m.snapshot.State == "ready" && m.width >= 32 {
-		actions = "h troubleshoot"
-	}
 	if m.showHelp {
 		actions = "↑↓ theme · Enter save · Esc close"
 		if compactHeight || m.width < 44 {
@@ -960,9 +957,6 @@ func (m Model) renderStatusHeader() string {
 	right := ""
 	if m.width >= 40 {
 		right = m.styleAction("h help")
-		if m.snapshot.State == "ready" {
-			right = m.styleAction("h troubleshoot")
-		}
 	}
 	state := m.styleState("[" + stateLabel(m.snapshot.State) + "]")
 	total := ""

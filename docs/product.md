@@ -11,7 +11,7 @@
 1. 用户在终端中打开 PowerShell 并进入工作目录。
 2. 用户运行 `codex.pp`；兼容入口 `prompt-pane codex` 继续可用，Codex 参数保持结构化 argv 原样转发。
 3. Prompt Pane 检查 Codex、插件、`codex.pp` 快捷入口和 Zellij；缺失或过期时列出受管组件并自动修复，成功后继续本次 Codex 启动，不要求用户确认或执行第二条命令。
-4. Zellij 创建左 70%、右 30% 的工作区，左侧获得焦点。
+4. Zellij 创建左 70%、右 30% 的工作区，左侧获得焦点；保留窗格边框与鼠标 resize，但本次会话不显示边框悬停高亮和 resize 帮助文字。
 5. 用户在左侧提交的提示词在 1 秒内显示到右侧。
 6. 退出工作区后回到可正常使用的 PowerShell。
 

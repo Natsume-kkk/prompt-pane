@@ -126,7 +126,7 @@ type Event struct {
 - 优先使用 `PATH` 中经过版本检查的 Zellij。
 - 缺失时由 `setup` 或首次引导自动下载固定版本，验证 SHA-256，安装到用户级 Prompt Pane 数据目录。
 - 不修改 PowerShell Profile、系统 `PATH` 或用户全局 Zellij 配置。
-- 临时 layout 使用左 70%、右 30%，左侧初始聚焦，关闭不必要的 Zellij UI。右侧 viewer command pane 不使用 `close_on_exit`，避免初始化、IPC 或 TUI 失败时吞掉错误；启动器通过本次运行的 `PROMPT_PANE_ZELLIJ_PATH` 传递已发现的 Zellij 绝对路径，viewer 收到 `Ctrl+X` 后由命令编排层使用当前 `ZELLIJ_PANE_ID` 定向关闭右侧窗格。关闭失败时保留 pane 和错误，左侧 Codex 不受影响。
+- 临时 layout 使用左 70%、右 30%，左侧初始聚焦，关闭不必要的 Zellij UI。启动 argv 仅为本次会话覆盖 `mouse_hover_effects=false`，隐藏窗格边框悬停高亮和 resize 帮助文字，同时保留 `advanced_mouse_actions`、窗格边框与鼠标 resize；不修改用户全局 Zellij 配置。右侧 viewer command pane 不使用 `close_on_exit`，避免初始化、IPC 或 TUI 失败时吞掉错误；启动器通过本次运行的 `PROMPT_PANE_ZELLIJ_PATH` 传递已发现的 Zellij 绝对路径，viewer 收到 `Ctrl+X` 后由命令编排层使用当前 `ZELLIJ_PANE_ID` 定向关闭右侧窗格。关闭失败时保留 pane 和错误，左侧 Codex 不受影响。
 
 ## TUI
 

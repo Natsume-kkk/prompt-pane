@@ -10,7 +10,7 @@ import (
 
 func TestLaunchArgumentsCreateNewSessionFromLayoutString(t *testing.T) {
 	arguments := launchArguments(`C:\Program Files\Prompt Pane\prompt-pane.exe`, []string{"resume"})
-	if len(arguments) != 2 || arguments[0] != "--layout-string" {
+	if len(arguments) != 5 || arguments[0] != "--layout-string" {
 		t.Fatalf("unexpected launch arguments: %q", arguments)
 	}
 	if slices.Contains(arguments, "--session") {
@@ -18,6 +18,9 @@ func TestLaunchArgumentsCreateNewSessionFromLayoutString(t *testing.T) {
 	}
 	if !strings.Contains(arguments[1], `"resume"`) {
 		t.Fatalf("layout did not preserve Codex arguments: %q", arguments[1])
+	}
+	if want := []string{"options", "--mouse-hover-effects", "false"}; !slices.Equal(arguments[2:], want) {
+		t.Fatalf("launch did not suppress session-scoped hover hints: got %q, want %q", arguments[2:], want)
 	}
 }
 

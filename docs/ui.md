@@ -45,7 +45,7 @@ viewer 的所有页面共享同一套终端网格，不为单个状态临时决�
 ```
 
 - 正文滚动，状态和帮助入口固定在底栏；日常 viewer 不显示品牌名或顶部标题栏。
-- Zellij 保留窗格边框，但右侧外层窗格使用视觉空白的非空名称，不显示可执行文件路径。
+- Zellij 保留窗格边框，但右侧外层窗格使用视觉空白的非空名称，不显示可执行文件路径；Prompt Pane 启动的会话关闭边框悬停高亮与 resize 帮助文字，不关闭鼠标 resize。
 - 初始 pane 比例固定为 70/30；程序不根据终端品牌或宽度自动改变比例，用户需要时使用 Zellij 自带的 resize 操作手动调整。
 - 左右各保留 1 个单元格内边距；不画内部全宽分隔线。
 - 编号槽最少预留 2 位并右对齐，达到 100 条时再按需扩展；编号槽左右各保留 1 个单元格，使其与窗格边界和正文的间距对称，正文在 1～99 条期间不得因编号位数变化而移动；续行与正文对齐，不显示竖向分隔符。
@@ -58,7 +58,7 @@ viewer 的所有页面共享同一套终端网格，不为单个状态临时决�
 
 ## 响应式布局
 
-- 宽度至少 32 列：底栏通常显示状态和 `h help`；`[READY]` 时改为 `h troubleshoot`，暂停跟随且存在新提示词时优先显示 `<n> new · End latest`。
+- 宽度至少 32 列：底栏通常显示状态和 `h help`；暂停跟随且存在新提示词时优先显示 `<n> new · End latest`。
 - 宽度 20–31 列：底栏保留状态，空间允许时显示 `h help` 或新提示词提醒。
 - 宽度少于 20 列：显示 `Pane too narrow`，底部仍保留状态；事件继续保留，恢复宽度后重排。
 - 高度规则统一遵循“统一网格与间距”，不得由 prompt、帮助或排障页面各自定义降级行为。
@@ -67,7 +67,7 @@ viewer 的所有页面共享同一套终端网格，不为单个状态临时决�
 
 ## 状态
 
-- `[READY]`：Codex 与 viewer 已启动，但尚未收到 Codex `SessionStart`，因此 Hook 链路还未被事件确认；Codex 可能要到首条 prompt 才创建逻辑 session，不能据此断定 Hook 未启用或未信任。正文显示 `Waiting for your first prompt`，底栏显示 `h troubleshoot`；若提交 prompt 后右侧仍无更新，排障页引导用户到左侧 Codex 打开 `/hooks` 审查 Prompt Pane，然后重新运行 `codex.pp`。
+- `[READY]`：Codex 与 viewer 已启动，但尚未收到 Codex `SessionStart`，因此 Hook 链路还未被事件确认；Codex 可能要到首条 prompt 才创建逻辑 session，不能据此断定 Hook 未启用或未信任。正文显示 `Waiting for your first prompt`，底栏与其他状态一致显示 `h help`；若提交 prompt 后右侧仍无更新，Help 的 `Connection` 区块引导用户到左侧 Codex 打开 `/hooks` 审查 Prompt Pane，然后重新运行 `codex.pp`。
 - `[LIVE]`：已收到 `SessionStart`，提示词链路实时接收正常；尚无 prompt 时显示 `Waiting for your first prompt`。
 - `[ENDED]`：会话已退出，保留最后快照；迟到提示词不得改变快照或恢复为 `[LIVE]`。
 - `[ERROR]`：本次运行不能安全继续。
