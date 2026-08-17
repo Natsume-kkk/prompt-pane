@@ -3,6 +3,9 @@ param()
 
 $ErrorActionPreference = "Stop"
 
+$unicodeUser = -join ([char[]](0x7528, 0x6237))
+$unicodeChinese = -join ([char[]](0x4E2D, 0x6587))
+
 $installer = Join-Path $PSScriptRoot "install.ps1"
 $tokens = $null
 $parseErrors = $null
@@ -78,7 +81,7 @@ try {
     }
 
     $source = Join-Path $temporaryRoot "source.exe"
-    $destination = Join-Path $temporaryRoot "用户 path\prompt-pane.exe"
+    $destination = Join-Path $temporaryRoot "$unicodeUser path\prompt-pane.exe"
 
     [IO.File]::WriteAllBytes($source, [byte[]](1, 2, 3, 4))
     $originalHash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
@@ -113,7 +116,7 @@ try {
         throw "Checksum rejection changed the installed executable."
     }
 
-    $env:PROMPT_PANE_HOME = Join-Path $temporaryRoot "中文 root"
+    $env:PROMPT_PANE_HOME = Join-Path $temporaryRoot "$unicodeChinese root"
     if ((Resolve-InstallRoot) -ne [IO.Path]::GetFullPath($env:PROMPT_PANE_HOME)) {
         throw "The custom install root was not preserved."
     }
