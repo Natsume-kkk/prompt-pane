@@ -8,7 +8,7 @@ $localGo = Join-Path $repoRoot ".tools\go\bin\go.exe"
 $go = if (Test-Path -LiteralPath $localGo -PathType Leaf) {
     $localGo
 } else {
-    (Get-Command go -CommandType Application -ErrorAction Stop).Source
+    (Get-Command go -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 }
 
 $distDir = Join-Path $repoRoot "dist"
