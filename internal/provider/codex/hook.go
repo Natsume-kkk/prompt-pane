@@ -73,7 +73,7 @@ func DecodeHook(r io.Reader) (provider.Event, error) {
 		return provider.Event{Kind: provider.SessionEnded, SessionID: input.SessionID}, nil
 	case "Stop":
 		if strings.TrimSpace(input.TranscriptPath) == "" {
-			return provider.Event{}, fmt.Errorf("stop hook has no transcript path")
+			return provider.Event{}, fmt.Errorf("%w: stop hook has no transcript path", ErrMetricsUnavailable)
 		}
 		metrics, err := readMetrics(input.TranscriptPath, input.SessionID, input.CWD, input.Model)
 		if err != nil {

@@ -4,7 +4,7 @@
 
 Prompt Pane 是独立 Go CLI。Zellij 只负责终端内 70/30 布局，Bubble Tea 只负责右侧 TUI，Codex 官方 Hooks 是实时提示词事实源。程序不调用终端品牌专有 API；能够正常运行受支持 Zellij 的终端均在支持边界内。
 
-Prompt Pane 不搜索 `~/.codex/sessions`、不读取 Codex App Server 历史，也不按时间、目录或进程猜测会话。新会话、恢复会话和清空后的会话都只显示本次运行期间 `UserPromptSubmit` Hook 实际收到的新提示词；上下文压缩保留本次运行已经显示的记录。`Stop` Hook 可以按官方提供的准确 `session_id` 与 `transcript_path` 只读解析当前会话的结构化 usage 元数据，但不得读取或保留 prompt、回复、推理和工具内容。
+Prompt Pane 不搜索 `~/.codex/sessions`、不读取 Codex App Server 历史，也不按时间、目录或进程猜测会话。新主会话、恢复会话和清空后的会话都只显示本次运行期间 `UserPromptSubmit` Hook 实际收到的新提示词；上下文压缩保留本次运行已经显示的记录。`/side`／`/btw` 的父提示词与指标只在当前进程内暂存，返回父会话时恢复，侧聊内容随覆盖层结束丢弃。`Stop` Hook 可以按官方提供的准确 `session_id` 与 `transcript_path` 只读解析当前会话的结构化 usage 元数据，但不得读取或保留 prompt、回复、推理和工具内容。
 
 ## 组件与依赖方向
 
@@ -86,7 +86,7 @@ server 必须验证版本、大小、token、`run_id`、事件字段和会话绑
 4. 通过 IPC 发送规范化事件。
 5. 成功时不向 stdout 写 prompt 或额外上下文。
 
-`Stop` Hook 只按本次 payload 的准确 `transcript_path` 逐行筛选 `session_meta`、`turn_context` 和 `token_count`；不提供最近文件回退，不把路径、原始行或内容字段送入 IPC。指标解析失败时静默跳过本次更新并保持 Codex 可用。
+`Stop` Hook 只按本次 payload 的准确 `transcript_path` 逐行筛选 `session_meta`、`turn_context` 和 `token_count`；不提供最近文件回退，不把路径、原始行或内容字段送入 IPC。`transcript_path` 为空或指标解析失败时都按指标不可用静默跳过本次更新并保持 Codex 可用。
 
 Hook 故障不得阻止用户 prompt。非托管 Hook 需要 Codex 信任；程序只能引导用户通过 `/hooks` 审查，禁止绕过信任。
 
@@ -96,12 +96,12 @@ Codex 会对所有会话加载已安装插件。Hook 只有在三个 Prompt Pane
 
 `codex.pp resume` 的参数原样交给 Codex，Prompt Pane 不提前选择或读取会话。Hook 订阅并验证官方 `SessionStart` source：
 
-- `startup`：建立首次绑定；相同 `session_id` 的重复事件保持当前快照，不同 `session_id` 表示进入新会话并原子清空提示词快照、`turn_id` 去重集合和 UI 阅读状态。
+- `startup`：建立首次绑定；相同 `session_id` 的重复事件保持当前快照。当前会话已经 `ended` 时，不同 `session_id` 表示进入新主会话并原子清空提示词快照、指标和 `turn_id` 去重集合；当前主会话仍为 `live` 时，不同 `session_id` 先建立临时覆盖层并暂存父提示词、去重集合与指标。
 - `resume`：无论 `session_id` 是否变化，都原子清空提示词快照、`turn_id` 去重集合和 UI 阅读状态，并显示只接收后续新提示词的内存提示。
 - `clear`：使用与 `resume` 相同的清空语义。
 - `compact`：保留提示词快照、去重集合和 UI 阅读状态，只在 `session_id` 变化时更新绑定。
 
-四种有效 source 都可以在同一认证运行内按上述规则更新 `session_id` 绑定。重绑后迟到的已知旧会话 prompt 与 `SessionEnd` 事件静默确认并丢弃，避免产生 Hook 失败且不得覆盖当前会话状态；返回曾经绑定过的会话时恢复其当前身份，先前其他会话继续视为旧会话。当前会话进入 `ended` 后，同会话迟到的 prompt 也静默确认并丢弃，只有后续有效 `SessionStart` 可以恢复为 `live`。未知会话事件、空 ID 和未知 source 仍拒绝。任何会话边界的 `transcript_path` 即使存在也不得读取。
+四种有效 source 都可以在同一认证运行内按上述规则更新 `session_id` 绑定。临时覆盖层只显示自身 prompt，但快照中的指标继续复制父会话最后有效值；覆盖层的 `metrics.updated` 静默确认并丢弃。覆盖层收到 `SessionEnd` 时立即恢复父快照；Codex 未发送退出事件时，父 `session_id` 的下一条 `prompt.submitted` 是唯一恢复信号，server 原子恢复父提示词与去重集合、追加该 prompt，并销毁覆盖层内容。父会话其他迟到事件和普通已知旧会话事件继续静默确认并丢弃，不得覆盖当前状态。`resume`、`clear` 与主会话结束后的新 `startup` 会丢弃任何暂存父快照并建立新的主绑定。当前主会话进入 `ended` 后，同会话迟到的 prompt 也静默确认并丢弃，只有后续有效 `SessionStart` 可以恢复为 `live`。未知会话事件、空 ID 和未知 source 仍拒绝。任何会话边界的 `transcript_path` 即使存在也不得读取。
 
 ## Provider 边界
 
@@ -147,7 +147,7 @@ type Event struct {
 ## 主要风险
 
 - Hook 漂移：官方字段 + 版本化 fixture + 未知字段兼容、缺失必需字段拒绝。
-- 会话切换串线：只允许认证运行内的有效 `SessionStart` 按 source 重绑并决定清空或保留；已知旧会话及当前会话结束后的迟到事件静默丢弃，未知会话事件拒绝。
+- 会话切换串线：只允许认证运行内的有效 `SessionStart` 建立主绑定或临时覆盖层；只有暂存父 `session_id` 的新 `UserPromptSubmit` 可以从覆盖层恢复父快照，其他旧会话及当前主会话结束后的迟到事件静默丢弃，未知会话事件拒绝。
 - 并发串线：随机 endpoint、token、`run_id` 和 session 状态机联合验证。
 - prompt 泄露：除用户显式拖选后写入系统剪贴板外，无内容日志、无持久化、无遥测、无网络传输；剪贴板只接收当前视口的安全渲染文字。
 - 终端注入：渲染前过滤控制序列，固定尺寸 Unicode 测试。

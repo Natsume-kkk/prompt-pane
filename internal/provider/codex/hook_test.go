@@ -151,3 +151,10 @@ func TestDecodeStopRejectsTranscriptFromAnotherSession(t *testing.T) {
 		t.Fatalf("mismatched transcript error = %v", err)
 	}
 }
+
+func TestDecodeStopWithoutTranscriptReportsUnavailableMetrics(t *testing.T) {
+	input := `{"session_id":"thr_current","hook_event_name":"Stop","transcript_path":null}`
+	if _, err := DecodeHook(strings.NewReader(input)); !errors.Is(err, ErrMetricsUnavailable) {
+		t.Fatalf("missing transcript error = %v", err)
+	}
+}

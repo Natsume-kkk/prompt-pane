@@ -21,7 +21,7 @@
 2. 当前运行通过认证 IPC 与 Hook `session_id` 精确绑定，不选择最近文件。
 3. 只接受官方 `UserPromptSubmit` 中的 prompt；不展示回答、推理、工具、权限、系统或开发者消息。
 4. 按提交顺序显示，保留 Unicode、多行和有意义空白；相同文本的不同提交不得合并。
-5. 新会话、恢复或清空会话不读取旧提示词并清空右侧，只显示边界后新提交的提示词；上下文压缩不清空本次运行记录。
+5. 新主会话、恢复或清空会话不读取旧提示词并清空右侧，只显示边界后新提交的提示词；上下文压缩不清空本次运行记录。`/side`／`/btw` 临时侧聊只覆盖正文：侧聊期间显示侧聊提示词并冻结保留父会话状态栏，返回父会话后的第一条 prompt 恢复父提示词并丢弃侧聊内容。
 6. Hook 或 IPC 失败不得破坏 Codex 自身运行，也不得串到其他会话。
 7. 位于底部时自动跟随；用户上滚后保持位置，直到主动返回最新项。
 8. resize 后按新单元格尺寸重排，不能越界、重叠或破坏 Unicode。
@@ -63,7 +63,11 @@
 
 ### 会话边界
 
-通过 `codex.pp resume`、兼容入口 `prompt-pane codex -- resume` 或 Codex 内 `/resume` 恢复会话。会话选择由 Codex 处理；恢复完成后右侧清空并提示只显示之后的新提示词，即使恢复事件沿用相同 `session_id` 也必须重置。不同 ID 的 `SessionStart(source=startup)` 表示同一次 `codex.pp` 运行内进入新会话，也必须清空右侧；相同 ID 的重复 `startup` 保留当前快照。`SessionStart(source=clear)` 使用相同清空语义；`SessionStart(source=compact)` 保留本次运行已经显示的提示词和阅读状态。跨 ID 切换后迟到的旧会话事件不得改变当前快照或状态；当前会话收到 `SessionEnd` 后，迟到提示词必须静默丢弃且不得把 `[ENDED]` 恢复为 `[LIVE]`，直到新的有效 `SessionStart` 到达。第一条新提示词到达后清除边界提示。
+通过 `codex.pp resume`、兼容入口 `prompt-pane codex -- resume` 或 Codex 内 `/resume` 恢复会话。会话选择由 Codex 处理；恢复完成后右侧清空并提示只显示之后的新提示词，即使恢复事件沿用相同 `session_id` 也必须重置。`SessionStart(source=clear)` 使用相同清空语义；`SessionStart(source=compact)` 保留本次运行已经显示的提示词和阅读状态。当前主会话已结束后的不同 ID `startup` 表示进入新主会话并清空右侧；主会话仍为 live 时出现的不同 ID `startup` 先作为 `/side`／`/btw` 临时覆盖层，正文只显示侧聊 prompt，状态栏继续显示进入侧聊前的父会话指标且不接受侧聊指标覆盖。若侧聊产生 `SessionEnd` 则立即恢复父快照；否则在父 `session_id` 的下一条 `UserPromptSubmit` 到达时恢复父提示词、追加该 prompt 并销毁侧聊内容。相同 ID 的重复 `startup` 保留当前快照。除上述父会话返回信号外，跨 ID 切换后的迟到旧会话事件不得改变当前快照或状态；当前主会话收到 `SessionEnd` 后，迟到提示词必须静默丢弃且不得把 `[ENDED]` 恢复为 `[LIVE]`，直到新的有效 `SessionStart` 到达。第一条新提示词到达后清除边界提示。
+
+### 临时侧聊
+
+主会话已有 prompt 和指标后进入 `/side`／`/btw`，确认右侧正文切换为侧聊 prompt，但主会话指标继续可见且保持最后有效值。侧聊 `Stop` 不得覆盖父指标，缺少 `transcript_path` 时必须静默跳过指标更新而不能显示 Hook 失败。退出侧聊后若 Codex 未提供退出 Hook，右侧允许暂时保留侧聊正文；提交下一条父会话 prompt 后必须恢复进入侧聊前的父提示词、追加新 prompt、继续使用父指标并不再保留侧聊内容。真正的新主会话、`resume` 或 `clear` 仍清空提示词和指标。
 
 ### 视觉交互
 

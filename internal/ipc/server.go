@@ -26,9 +26,19 @@ type Server struct {
 	seen      map[string]struct{}
 	notice    string
 	metrics   *provider.SessionMetrics
+	parent    *sessionView
 	viewers   map[net.Conn]struct{}
 	closed    chan struct{}
 	closeOnce sync.Once
+}
+
+type sessionView struct {
+	state     string
+	sessionID string
+	prompts   []provider.UserPrompt
+	seen      map[string]struct{}
+	notice    string
+	metrics   *provider.SessionMetrics
 }
 
 func NewServer(run runcontext.Context) *Server {
@@ -131,6 +141,26 @@ func (s *Server) apply(event provider.Event) bool {
 			return false
 		}
 		sessionChanged := s.sessionID != "" && s.sessionID != event.SessionID
+		// Codex has no side-chat source or exit hook. A different startup while the
+		// parent is still live is the only reliable distinction from a new main chat.
+		if event.Source == provider.SessionSourceStartup && sessionChanged && s.state == "live" && s.parent == nil {
+			parent := s.captureSessionLocked()
+			s.parent = &parent
+			s.stale[s.sessionID] = struct{}{}
+			delete(s.stale, event.SessionID)
+			s.state = "live"
+			s.sessionID = event.SessionID
+			s.prompts = nil
+			s.seen = make(map[string]struct{})
+			s.notice = ""
+			s.metrics = cloneMetrics(parent.metrics)
+			break
+		}
+		if s.parent != nil && !sessionChanged && (event.Source == provider.SessionSourceStartup || event.Source == provider.SessionSourceCompact) {
+			s.state = "live"
+			break
+		}
+		s.parent = nil
 		if sessionChanged {
 			s.stale[s.sessionID] = struct{}{}
 		}
@@ -159,10 +189,22 @@ func (s *Server) apply(event provider.Event) bool {
 		s.sessionID = event.SessionID
 		s.state = "live"
 	case provider.PromptSubmitted:
-		if event.Prompt == nil || s.sessionID == "" || event.SessionID != s.sessionID {
-			_, stale := s.stale[event.SessionID]
+		if event.Prompt == nil || s.sessionID == "" {
 			s.mu.Unlock()
-			return event.Prompt != nil && stale
+			return false
+		}
+		if event.SessionID != s.sessionID {
+			if s.parent != nil && event.SessionID == s.parent.sessionID {
+				overlayID := s.sessionID
+				s.restoreSessionLocked(*s.parent)
+				s.parent = nil
+				s.stale[overlayID] = struct{}{}
+				delete(s.stale, event.SessionID)
+			} else {
+				_, stale := s.stale[event.SessionID]
+				s.mu.Unlock()
+				return stale
+			}
 		}
 		if s.state == "ended" {
 			s.mu.Unlock()
@@ -186,6 +228,10 @@ func (s *Server) apply(event provider.Event) bool {
 			s.mu.Unlock()
 			return true
 		}
+		if s.parent != nil {
+			s.mu.Unlock()
+			return true
+		}
 		copy := *event.Metrics
 		s.metrics = &copy
 	case provider.SessionEnded:
@@ -193,6 +239,14 @@ func (s *Server) apply(event provider.Event) bool {
 			_, stale := s.stale[event.SessionID]
 			s.mu.Unlock()
 			return stale
+		}
+		if s.parent != nil {
+			overlayID := s.sessionID
+			s.restoreSessionLocked(*s.parent)
+			s.parent = nil
+			s.stale[overlayID] = struct{}{}
+			delete(s.stale, s.sessionID)
+			break
 		}
 		s.state = "ended"
 		s.notice = ""
@@ -203,6 +257,42 @@ func (s *Server) apply(event provider.Event) bool {
 	s.broadcastLocked()
 	s.mu.Unlock()
 	return true
+}
+
+func (s *Server) captureSessionLocked() sessionView {
+	return sessionView{
+		state:     s.state,
+		sessionID: s.sessionID,
+		prompts:   append([]provider.UserPrompt(nil), s.prompts...),
+		seen:      cloneSeen(s.seen),
+		notice:    s.notice,
+		metrics:   cloneMetrics(s.metrics),
+	}
+}
+
+func (s *Server) restoreSessionLocked(view sessionView) {
+	s.state = view.state
+	s.sessionID = view.sessionID
+	s.prompts = append([]provider.UserPrompt(nil), view.prompts...)
+	s.seen = cloneSeen(view.seen)
+	s.notice = view.notice
+	s.metrics = cloneMetrics(view.metrics)
+}
+
+func cloneSeen(source map[string]struct{}) map[string]struct{} {
+	copy := make(map[string]struct{}, len(source))
+	for id := range source {
+		copy[id] = struct{}{}
+	}
+	return copy
+}
+
+func cloneMetrics(metrics *provider.SessionMetrics) *provider.SessionMetrics {
+	if metrics == nil {
+		return nil
+	}
+	copy := *metrics
+	return &copy
 }
 
 func (s *Server) addViewer(conn net.Conn) {
@@ -217,12 +307,7 @@ func (s *Server) addViewer(conn net.Conn) {
 
 func (s *Server) snapshotLocked() Snapshot {
 	prompts := append([]provider.UserPrompt(nil), s.prompts...)
-	var metrics *provider.SessionMetrics
-	if s.metrics != nil {
-		copy := *s.metrics
-		metrics = &copy
-	}
-	return Snapshot{State: s.state, Prompts: prompts, Notice: s.notice, Metrics: metrics}
+	return Snapshot{State: s.state, Prompts: prompts, Notice: s.notice, Metrics: cloneMetrics(s.metrics)}
 }
 
 func (s *Server) broadcastLocked() {

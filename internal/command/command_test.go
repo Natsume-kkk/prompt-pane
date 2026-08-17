@@ -339,3 +339,20 @@ func TestStopHookSilentlySkipsUnavailableMetrics(t *testing.T) {
 		t.Fatalf("Stop hook exit = %d, output = %q", code, output.String())
 	}
 }
+
+func TestStopHookSilentlySkipsMissingTranscript(t *testing.T) {
+	run, err := runcontext.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, value := range map[string]string{
+		runcontext.EnvRunID: run.ID, runcontext.EnvToken: run.Token, runcontext.EnvEndpoint: run.Endpoint,
+	} {
+		t.Setenv(name, value)
+	}
+	var output bytes.Buffer
+	app := App{In: strings.NewReader(`{"session_id":"thr_synthetic","hook_event_name":"Stop","transcript_path":null}`), Out: &output, Err: &output}
+	if code := app.Execute([]string{"_hook", "codex"}); code != 0 || output.Len() != 0 {
+		t.Fatalf("Stop hook exit = %d, output = %q", code, output.String())
+	}
+}

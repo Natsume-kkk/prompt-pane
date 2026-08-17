@@ -232,6 +232,62 @@ func TestMetricsFollowSessionResetRules(t *testing.T) {
 	}
 }
 
+func TestSideChatRestoresParentOnNextPromptAndKeepsMetrics(t *testing.T) {
+	run, err := runcontext.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(run)
+	parentMetrics := &provider.SessionMetrics{Model: "gpt-5.6-sol", TotalTokens: 120}
+	sideMetrics := &provider.SessionMetrics{Model: "gpt-5.6-luna", TotalTokens: 12}
+	if !server.apply(provider.Event{Kind: provider.SessionStarted, SessionID: "parent", Source: provider.SessionSourceStartup}) ||
+		!server.apply(provider.Event{Kind: provider.PromptSubmitted, SessionID: "parent", Prompt: &provider.UserPrompt{ID: "parent-1", Text: "before side"}}) ||
+		!server.apply(provider.Event{Kind: provider.MetricsUpdated, SessionID: "parent", Metrics: parentMetrics}) ||
+		!server.apply(provider.Event{Kind: provider.SessionStarted, SessionID: "side", Source: provider.SessionSourceStartup}) {
+		t.Fatal("side chat setup was rejected")
+	}
+	if snapshot := server.snapshotLocked(); len(snapshot.Prompts) != 0 || snapshot.Metrics == nil || snapshot.Metrics.TotalTokens != 120 {
+		t.Fatalf("side chat did not inherit parent metrics: %#v", snapshot)
+	}
+	if !server.apply(provider.Event{Kind: provider.PromptSubmitted, SessionID: "side", Prompt: &provider.UserPrompt{ID: "side-1", Text: "temporary"}}) ||
+		!server.apply(provider.Event{Kind: provider.MetricsUpdated, SessionID: "side", Metrics: sideMetrics}) {
+		t.Fatal("side chat events were rejected")
+	}
+	if snapshot := server.snapshotLocked(); len(snapshot.Prompts) != 1 || snapshot.Prompts[0].Text != "temporary" || snapshot.Metrics == nil || snapshot.Metrics.TotalTokens != 120 {
+		t.Fatalf("side chat changed frozen parent metrics: %#v", snapshot)
+	}
+	if !server.apply(provider.Event{Kind: provider.PromptSubmitted, SessionID: "parent", Prompt: &provider.UserPrompt{ID: "parent-2", Text: "after side"}}) {
+		t.Fatal("returning parent prompt was rejected")
+	}
+	if snapshot := server.snapshotLocked(); len(snapshot.Prompts) != 2 || snapshot.Prompts[0].Text != "before side" || snapshot.Prompts[1].Text != "after side" || snapshot.Metrics == nil || snapshot.Metrics.TotalTokens != 120 {
+		t.Fatalf("parent snapshot was not restored: %#v", snapshot)
+	}
+	if !server.apply(provider.Event{Kind: provider.PromptSubmitted, SessionID: "side", Prompt: &provider.UserPrompt{ID: "side-late", Text: "late"}}) {
+		t.Fatal("late side prompt was not ignored")
+	}
+	if snapshot := server.snapshotLocked(); len(snapshot.Prompts) != 2 {
+		t.Fatalf("late side prompt changed restored parent: %#v", snapshot)
+	}
+}
+
+func TestSideChatSessionEndRestoresParentImmediately(t *testing.T) {
+	run, err := runcontext.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(run)
+	if !server.apply(provider.Event{Kind: provider.SessionStarted, SessionID: "parent", Source: provider.SessionSourceStartup}) ||
+		!server.apply(provider.Event{Kind: provider.PromptSubmitted, SessionID: "parent", Prompt: &provider.UserPrompt{ID: "parent-1", Text: "parent"}}) ||
+		!server.apply(provider.Event{Kind: provider.SessionStarted, SessionID: "side", Source: provider.SessionSourceStartup}) ||
+		!server.apply(provider.Event{Kind: provider.PromptSubmitted, SessionID: "side", Prompt: &provider.UserPrompt{ID: "side-1", Text: "side"}}) ||
+		!server.apply(provider.Event{Kind: provider.SessionEnded, SessionID: "side"}) {
+		t.Fatal("side chat end sequence was rejected")
+	}
+	if snapshot := server.snapshotLocked(); snapshot.State != "live" || len(snapshot.Prompts) != 1 || snapshot.Prompts[0].Text != "parent" {
+		t.Fatalf("side chat end did not restore parent: %#v", snapshot)
+	}
+}
+
 func TestServerBroadcastsSameSessionResumeReset(t *testing.T) {
 	run, err := runcontext.New()
 	if err != nil {
@@ -403,14 +459,15 @@ func TestUnknownSessionEventsAreRejected(t *testing.T) {
 	}
 }
 
-func TestDifferentStartupSessionClearsAndRebinds(t *testing.T) {
+func TestDifferentStartupAfterSessionEndClearsAndRebinds(t *testing.T) {
 	run, err := runcontext.New()
 	if err != nil {
 		t.Fatal(err)
 	}
 	server := NewServer(run)
 	if !server.apply(provider.Event{Kind: provider.SessionStarted, SessionID: "first", Source: provider.SessionSourceStartup}) ||
-		!server.apply(provider.Event{Kind: provider.PromptSubmitted, SessionID: "first", Prompt: &provider.UserPrompt{ID: "old", Text: "old"}}) {
+		!server.apply(provider.Event{Kind: provider.PromptSubmitted, SessionID: "first", Prompt: &provider.UserPrompt{ID: "old", Text: "old"}}) ||
+		!server.apply(provider.Event{Kind: provider.SessionEnded, SessionID: "first"}) {
 		t.Fatal("first session was rejected")
 	}
 	if !server.apply(provider.Event{Kind: provider.SessionStarted, SessionID: "second", Source: provider.SessionSourceStartup}) {
