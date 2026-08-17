@@ -519,8 +519,22 @@ func TestStatusLineUsesThemeRolesAndFitsWidth(t *testing.T) {
 			t.Fatalf("status line exceeded width: %q", lines)
 		}
 	}
-	if !strings.Contains(output, "\x1b[38;2;255;85;85m") || !strings.Contains(output, "\x1b[48;2;") || strings.Contains(output, "prompt-pane") {
+	if !strings.Contains(output, "\x1b[38;2;255;85;85m") || !strings.Contains(output, "█") || !strings.Contains(output, "░") || strings.Contains(output, "\x1b[48;2;") || strings.Contains(output, "prompt-pane") {
 		t.Fatalf("status lines do not fit or use Dracula danger color: %q", lines)
+	}
+}
+
+func TestProgressBarUsesForegroundFillAndDottedRemainder(t *testing.T) {
+	plain := Model{noColor: true}
+	if got, want := plain.renderPercent(66, 10), "███████░░░ 66%"; got != want {
+		t.Fatalf("plain progress = %q, want %q", got, want)
+	}
+
+	colored := Model{}
+	colored.applyTheme(theme.Mocha)
+	output := colored.renderPercent(66, 10)
+	if !strings.Contains(ansi.Strip(output), "███████░░░") || !strings.Contains(output, "\x1b[38;2;") || strings.Contains(output, "\x1b[48;2;") {
+		t.Fatalf("colored progress did not use foreground glyphs: %q", output)
 	}
 }
 
@@ -535,14 +549,15 @@ func TestDefaultStatusKeepsTokenTrackerBarsAndWideStatusCompresses(t *testing.T)
 	narrowLines := narrow.renderStatusBlock(4)
 	narrowOutput := strings.Join(narrowLines, "\n")
 	plain := ansi.Strip(narrowOutput)
-	if !strings.Contains(plain, "[LIVE] (main)") || strings.Contains(plain, "prompt-pane") || !strings.Contains(narrowOutput, "\x1b[48;2;") {
+	if !strings.Contains(plain, "[LIVE] (main)") || strings.Contains(plain, "prompt-pane") || !strings.Contains(plain, "█") || !strings.Contains(plain, "░") || strings.Contains(narrowOutput, "\x1b[48;2;") {
 		t.Fatalf("default status lost branch placement or Token Tracker bars: %q", narrowLines)
 	}
 	for _, width := range []int{24, 32, 48} {
 		model := narrow
 		model.width = width
 		output := strings.Join(model.renderStatusBlock(4), "\n")
-		if !strings.Contains(output, "\x1b[48;2;") {
+		plain := ansi.Strip(output)
+		if !strings.Contains(plain, "█") || !strings.Contains(plain, "░") || strings.Contains(output, "\x1b[48;2;") {
 			t.Fatalf("width=%d dropped progress bars too early: %q", width, output)
 		}
 	}
@@ -574,15 +589,17 @@ func TestEnvironmentThemeCanPreviewButNotSave(t *testing.T) {
 	}
 }
 
-func TestThemeColorsStatusIndexAndHelpAction(t *testing.T) {
-	model := Model{width: 48, height: 12, selectedID: "two", snapshot: ipc.Snapshot{State: "live", Prompts: []provider.UserPrompt{{ID: "one", Text: "first"}, {ID: "two", Text: "second"}}}}
-	model.applyTheme(theme.Dracula)
-	output := model.render()
-	palette := theme.Resolve(theme.Dracula, false)
-	state := lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Green)).Render("[LIVE]")
-	accent := lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Sapphire))
-	if !strings.Contains(output, state) || !strings.Contains(output, accent.Render("  1 ")) || !strings.Contains(output, accent.Render("h help ")) {
-		t.Fatalf("theme roles were not shared by state, index and help action: %q", output)
+func TestEveryThemeColorsStatusIndexSelectionAndHelpAction(t *testing.T) {
+	for _, name := range theme.Names()[1:] {
+		model := Model{width: 48, height: 12, selectedID: "two", snapshot: ipc.Snapshot{State: "live", Prompts: []provider.UserPrompt{{ID: "one", Text: "first"}, {ID: "two", Text: "second"}}}}
+		model.applyTheme(name)
+		output := model.render()
+		palette := theme.Resolve(name, false)
+		state := lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Green)).Render("[LIVE]")
+		accent := lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Sapphire))
+		if !strings.Contains(output, state) || !strings.Contains(output, accent.Render("  1 ")) || !strings.Contains(output, accent.Render("  2 second")) || !strings.Contains(output, accent.Render("h help ")) {
+			t.Fatalf("theme=%s roles were not shared by state, index, selection and help action: %q", name, output)
+		}
 	}
 }
 

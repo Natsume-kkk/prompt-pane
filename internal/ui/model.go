@@ -1046,11 +1046,11 @@ func (m Model) renderPercent(percent float64, barWidth int) string {
 		return m.styleColor(fmt.Sprintf("%.0f%%", percent), color)
 	}
 	filled := int(percent/100*float64(barWidth) + 0.5)
-	bar := strings.Repeat("█", filled)
-	if !m.noColor && filled > 0 {
-		bar = lipgloss.NewStyle().Background(lipgloss.Color(color)).Render(strings.Repeat(" ", filled))
+	bar := m.styleColor(strings.Repeat("█", filled), color)
+	empty := strings.Repeat("░", barWidth-filled)
+	if percent > 0 {
+		empty = m.styleColor(empty, color)
 	}
-	empty := m.styleColor(strings.Repeat("░", barWidth-filled), color)
 	return bar + empty + " " + m.styleColor(fmt.Sprintf("%.0f%%", percent), color)
 }
 

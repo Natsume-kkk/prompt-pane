@@ -98,7 +98,7 @@ codex.pp resume
 
 ### 状态栏与主题
 
-每次 Codex 回答完成后，viewer 会更新当前会话的累计 token、上下文占用、5 小时／7 天限额、模型以及宽度允许时的 Git 分支状态。默认 70/30 窗格保留 Token Tracker 同款进度条，窄栏拆行、宽栏合并；指标不可用时会隐藏，不用 `0` 代替未知值。
+每次 Codex 回答完成后，viewer 会更新当前会话的累计 token、上下文占用、5 小时／7 天限额、模型以及宽度允许时的 Git 分支状态。默认 70/30 窗格保留 Token Tracker 同款 `█` 填充与 `░` 点阵进度条，窄栏拆行、宽栏合并；指标不可用时会隐藏，不用 `0` 代替未知值。
 
 内置主题为 `mocha`、`latte`、`frappe`、`macchiato`、`nord` 和 `dracula`，色值与语义映射来自 Token Tracker。默认 `auto` 会在可确认浅色背景时使用 `latte`，否则使用 `mocha`。帮助页直接列出对齐的主题名称和对应色板，使用 `↑`／`↓` 实时预览并以 `Enter` 保存；区块标题和正文使用当前主题的不同语义色。也可用 `PROMPT_PANE_THEME` 临时覆盖，`NO_COLOR` 会关闭颜色。
 
