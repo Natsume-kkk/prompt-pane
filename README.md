@@ -2,13 +2,7 @@
 
 Prompt Pane 在同一个终端工作区中并排运行 Codex CLI 与本次运行的用户提示词：左侧继续使用 Codex，右侧实时查看自己提交过的 prompt。
 
-```text
-┌──────────────────────────────────────┬──────────────────┐
-│ Codex CLI                            │ 1  first prompt  │
-│                                      │                  │
-│                                      │ [LIVE]    h help │
-└──────────────────────────────────────┴──────────────────┘
-```
+![Prompt Pane：Codex 与本次运行的提示词并排显示](docs/assets/prompt-pane-hero.png)
 
 ## 当前版本
 
@@ -120,6 +114,10 @@ codex.pp resume
 | 选择并复制可见文字 | 按住左键拖动，松开后复制 |
 
 `Ctrl+X` 只关闭右侧 viewer，左侧 Codex 会继续运行。终端不支持 OSC 52 时，可以按住 `Shift` 使用终端原生选择和复制。
+
+<p align="center">
+  <img src="docs/assets/prompt-pane-themes.png" alt="Prompt Pane 帮助页与六套主题预览" width="420">
+</p>
 
 ### 状态栏与主题
 

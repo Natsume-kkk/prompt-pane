@@ -1,0 +1,86 @@
+name: Windows CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate Windows x64
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Report toolchain
+        run: |
+          go version
+          gcc --version
+          go env GOOS GOARCH CGO_ENABLED
+
+      - name: Check formatting
+        run: |
+          $unformatted = @(git ls-files '*.go' | ForEach-Object { gofmt -l $_ })
+          if ($unformatted.Count -ne 0) {
+            Write-Error ("Unformatted Go files:`n" + ($unformatted -join "`n"))
+            exit 1
+          }
+
+      - name: Check module files
+        run: go mod tidy -diff
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -count=1 ./...
+
+      - name: Test with race detector
+        env:
+          CGO_ENABLED: 1
+        run: go test -race -count=1 ./...
+
+      - name: Test installer with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\test-install.ps1
+
+      - name: Test installer with PowerShell 7
+        run: .\scripts\test-install.ps1
+
+      - name: Build release artifact
+        run: .\scripts\build.cmd
+
+      - name: Verify version and checksum
+        run: |
+          $version = & .\dist\prompt-pane.exe version
+          if ($version -ne 'prompt-pane 1.1.0') {
+            Write-Error "Unexpected version output: $version"
+            exit 1
+          }
+
+          $expected = ((Get-Content .\dist\prompt-pane.exe.sha256 -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
+          $actual = (Get-FileHash .\dist\prompt-pane.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) {
+            Write-Error "SHA-256 mismatch: expected $expected, got $actual"
+            exit 1
+          }
