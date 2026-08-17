@@ -253,10 +253,26 @@ func TestLaunchRepairNeedsNoConfirmationAndSetupRunsFinalChecks(t *testing.T) {
 	if code := app.setupCodex(); code != 0 {
 		t.Fatalf("setup exit code = %d, output = %q", code, output.String())
 	}
-	for _, want := range []string{"Running final checks", "[OK]   Platform", "Environment is ready", "Setup complete. Start Codex"} {
+	for _, want := range []string{"Running final checks", "[OK]   Platform", "Environment is ready", "Setup complete.", "Run `codex.pp` when ready."} {
 		if !strings.Contains(output.String(), want) {
 			t.Fatalf("setup output is missing %q: %q", want, output.String())
 		}
+	}
+}
+
+func TestSetupCompletionExplainsFirstPromptTrustOnlyOnFirstInstall(t *testing.T) {
+	var firstInstall bytes.Buffer
+	writeSetupCompletion(&firstInstall, true)
+	for _, want := range []string{"Setup complete.", "1. Run `codex.pp`.", "2. Submit your first prompt.", "open `/hooks` in Codex", "restart `codex.pp`"} {
+		if !strings.Contains(firstInstall.String(), want) {
+			t.Fatalf("first-install completion is missing %q: %q", want, firstInstall.String())
+		}
+	}
+
+	var refresh bytes.Buffer
+	writeSetupCompletion(&refresh, false)
+	if output := refresh.String(); !strings.Contains(output, "Run `codex.pp` when ready.") || strings.Contains(output, "/hooks") || strings.Contains(output, "first prompt") {
+		t.Fatalf("refresh completion repeated first-install guidance: %q", output)
 	}
 }
 

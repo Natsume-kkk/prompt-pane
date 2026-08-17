@@ -12,7 +12,7 @@ Prompt Pane 在同一个终端工作区中并排运行 Codex CLI 与本次运行
 
 ## 当前版本
 
-当前源码版本为 `v1.1.0`，支持 Windows x64。目前暂未提供预编译安装包或 GitHub Release。
+当前源码版本为 `v1.1.0`，支持 Windows x64。仓库已准备 PowerShell 一键安装脚本和发布物 SHA-256 契约；在 GitHub Release 正式创建前，外部一键安装命令仍不可用，当前请使用下方源码构建方式。
 
 | 项目 | 支持范围 |
 |---|---|
@@ -25,6 +25,23 @@ Prompt Pane 在同一个终端工作区中并排运行 Codex CLI 与本次运行
 当前验证基线为 Go 1.26.5、Codex CLI 0.147.0 和 Zellij 0.44.3。终端只需能够正常运行受支持的 Zellij，不限定品牌。
 
 ## 快速开始
+
+公开 GitHub Release 后，推荐在 PowerShell 5.1 或 7 中运行一条命令完成当前用户级安装；重复执行同一命令即可升级：
+
+```powershell
+irm https://raw.githubusercontent.com/Natsume-kkk/prompt-pane/main/scripts/install.ps1 | iex
+```
+
+如果组织策略不允许内联脚本，可先下载、审查，再以单次进程级策略运行：
+
+```powershell
+irm https://raw.githubusercontent.com/Natsume-kkk/prompt-pane/main/scripts/install.ps1 -OutFile .\install.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+脚本只支持 Windows x64，会直接下载 Release 的 `prompt-pane.exe` 与 `prompt-pane.exe.sha256`，校验 SHA-256 后原子更新到当前用户目录，再运行 `setup codex`。它不要求管理员权限，不修改 PowerShell Profile、执行策略或系统 `PATH`。在 Release 尚未创建或仓库仍不可公开访问时，这条命令会失败，不应作为当前可用入口宣传。
+
+当前源码安装方式如下。
 
 克隆仓库并构建：
 
@@ -50,7 +67,7 @@ cd prompt-pane
 
 它不会替换原有的 `codex` 命令，也不会修改 PowerShell Profile 或系统 `PATH`。
 
-首次安装或 Hook 发生变化后，在 Codex 中运行 `/hooks`，审查并信任 Prompt Pane Hook，然后重新启动：
+首次运行时先提交一条 prompt；如果右侧仍未显示，界面会在约 10 秒后直接提示打开 `/hooks`。在 Codex 中审查 Prompt Pane Hook，然后重新启动：
 
 ```powershell
 codex.pp
@@ -102,7 +119,7 @@ codex.pp resume
 
 进入 `/side` 或 `/btw` 时，viewer 正文临时切换为侧聊提示词，状态栏继续保留父对话最后一次有效指标且不接受侧聊指标覆盖。Codex 未提供侧聊退出 Hook 时，关闭侧聊后正文会暂时停留在侧聊最后快照；提交下一条父对话提示词后，viewer 恢复原父提示词、追加新提示词并丢弃侧聊内容。
 
-内置主题为 `mocha`、`latte`、`frappe`、`macchiato`、`nord` 和 `dracula`，色值与语义映射来自 Token Tracker。默认 `auto` 会在可确认浅色背景时使用 `latte`，否则使用 `mocha`，但不会作为多余选项显示在主题列表中。帮助页统一以 `Help` 为标题，依次显示连接排障（仅适用时）、viewer 操作、导航、prompt 操作、与当前工作区直接相关的 Zellij 默认操作、主题与语义预览，最后以精简 `About` 说明版本、技术基础、Token Tracker 视觉来源和支持环境；自定义 Zellij 键位可能与默认提示不同。固定页脚使用 `↑`／`↓` 实时预览、`Enter` 保存。帮助正文、未选中主题名称和普通提示词编号使用正常前景色。也可用 `PROMPT_PANE_THEME` 临时覆盖，`NO_COLOR` 会关闭颜色。
+内置主题为 `mocha`、`latte`、`frappe`、`macchiato`、`nord` 和 `dracula`，色值与语义映射来自 Token Tracker。默认 `auto` 会在可确认浅色背景时使用 `latte`，否则使用 `mocha`，但不会作为多余选项显示在主题列表中。帮助页统一以 `Help` 为标题，依次显示连接排障（仅适用时）、viewer 操作、导航、prompt 操作、主题与语义预览、与当前工作区直接相关的 Zellij 默认操作，最后以精简 `About` 说明版本、技术基础、Token Tracker 视觉来源和支持环境；宽度允许时会用 `current`／`recommended` 区分当前与自动推荐主题，自定义 Zellij 键位可能与默认提示不同。固定页脚使用 `↑`／`↓` 实时预览、`Enter` 保存。帮助正文、未选中主题名称和普通提示词编号使用正常前景色。也可用 `PROMPT_PANE_THEME` 临时覆盖，`NO_COLOR` 会关闭颜色。
 
 ## 会话行为
 

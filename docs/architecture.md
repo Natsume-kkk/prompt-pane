@@ -134,6 +134,8 @@ type Event struct {
 
 ## 安装边界
 
+- `scripts/install.ps1` 是 GitHub 分发引导层，不复制 Go 安装事务。它在 PowerShell 5.1／7 中解析目标版本，通过 GitHub Release 固定下载地址获取 Windows x64 可执行文件与 SHA-256，先在临时目录校验，再原子更新当前用户 `PromptPane\\bin\\prompt-pane.exe`，最后以绝对路径调用 `setup codex`。脚本不调用 GitHub API、不安装 Codex、不修改 `PATH`、Profile、执行策略或系统配置；失败时不得替换已有可用程序。
+- 默认安装根目录与 `PROMPT_PANE_HOME` 使用同一解析规则；脚本支持显式版本用于复现和诊断，但不负责回滚已经安装的版本。安装脚本只处理 Prompt Pane 主程序，Codex 插件、`codex.pp` 和 Zellij 仍由 Go 内部安装事务拥有和验证。
 - 公开用例在开始安装或启动工作区前校验 `windows/amd64`；`setup codex` 与 `doctor` 还要发现一个可运行的 PowerShell 5.1 或 7。Hook 的 `commandWindows` 只使用两者共有的调用运算符、环境变量和原生退出码语法。
 - Codex 继续通过 `exec.LookPath` 发现，所有路径通过 `filepath` 和结构化 argv 传递，不假定盘符、用户名、npm 包管理器或无空格路径。任何下载和持久安装之前，对 Prompt Pane 数据目录、Codex 配置目录及 `codex.pp` 目标目录执行临时文件写入探测并立即清理。
 - `setup codex` 列出需要处理的受管组件后，提取 `plugins/prompt-pane/` 中内嵌的插件，将当前 Windows 可执行文件复制到插件目录，并生成符合 Codex 目录约定的本地 marketplace；Hook 通过 Codex 提供的 `PLUGIN_ROOT` 和 PowerShell 调用运算符调用该副本，并显式透传原生退出码，不依赖系统 `PATH`，安装仍只使用 Codex 官方 plugin 命令且不手工修改 `config.toml`。安装事务完成后，setup 调用与独立 `doctor` 相同的只读环境检查；检查失败则整体返回失败，只有全部通过才输出启动命令。

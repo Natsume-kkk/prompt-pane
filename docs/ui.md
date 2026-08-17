@@ -27,7 +27,7 @@ viewer 的所有页面共享同一套终端网格，不为单个状态临时决�
 - 宽度至少 110 列时用横向双单元格方块显示完整负空间 `PROMPT PANE`；宽度 60～109 列时用单元格方块显示完整名称；宽度不足 60 列时显示负空间 `PP`，无法安全渲染时只显示普通文字进度。
 - 下落中方块使用弱化色，落位过程和最终标识使用统一绿色；成功时整体轻微提亮一次，不闪屏。失败时不补齐标识，已落位部分弱化，状态行优先保留完整 `[FAIL]`；`NO_COLOR` 下使用终端默认色。
 - 阶段编号、总阶段数和百分比只代表本次实际执行的环境检查、缺失组件安装与最终验证；首帧必须使用本次真实总阶段数，已就绪组件不得显示为正在安装，百分比不得倒退。
-- 交互式动画、状态和完成文案共享终端中心轴；首次安装事务结束显示 `Installation ready`／`Running final checks`；显式刷新按逐行进度结束后显示 `Refresh ready`／`Running final checks`，随后逐项输出完整诊断，全部通过才显示 `Setup complete. Start Codex with codex.pp.`；启动前自动修复结束显示 `Repair complete · Starting Codex…`。
+- 交互式动画、状态和完成文案共享终端中心轴；首次安装事务结束显示 `Installation ready`／`Running final checks`；显式刷新按逐行进度结束后显示 `Refresh ready`／`Running final checks`，随后逐项输出完整诊断。首次安装全部通过后显示 `Setup complete.`，并依次说明运行 `codex.pp`、提交第一条 prompt，以及未显示时打开 `/hooks` 审查 Prompt Pane；刷新路径只显示可以继续运行 `codex.pp`，不重复首次信任教学。启动前自动修复结束显示 `Repair complete · Starting Codex…`。
 - 非交互输出、重定向输出和渲染初始化失败必须使用逐行文本进度；动画只是反馈层，不参与安装事务或成功判断。交互动画必须在运行期间消费终端能力查询回复，并在退出前恢复终端状态，不得把 CSI 等协议回复泄漏给 Shell。
 
 ## 标准布局
@@ -67,7 +67,7 @@ viewer 的所有页面共享同一套终端网格，不为单个状态临时决�
 
 ## 状态
 
-- `[READY]`：Codex 与 viewer 已启动，但尚未收到 Codex `SessionStart`，因此 Hook 链路还未被事件确认；Codex 可能要到首条 prompt 才创建逻辑 session，不能据此断定 Hook 未启用或未信任。正文显示 `Waiting for your first prompt`，底栏与其他状态一致显示 `h help`；若提交 prompt 后右侧仍无更新，Help 的 `Connection` 区块引导用户到左侧 Codex 打开 `/hooks` 审查 Prompt Pane，然后重新运行 `codex.pp`。
+- `[READY]`：Codex 与 viewer 已启动，但尚未收到 Codex `SessionStart`，因此 Hook 链路还未被事件确认；Codex 可能要到首条 prompt 才创建逻辑 session，不能据此断定 Hook 未启用或未信任。前 10 秒正文显示 `Waiting for your first prompt`；约 10 秒仍为无 prompt 的 `[READY]` 时，正文主动显示紧凑的 `Open /hooks in Codex`、`Review Prompt Pane` 和 `Restart codex.pp` 三步引导，不要求用户先打开 Help。底栏与其他状态一致显示 `h help`，Help 的 `Connection` 区块保留完整解释。
 - `[LIVE]`：已收到 `SessionStart`，提示词链路实时接收正常；尚无 prompt 时显示 `Waiting for your first prompt`。
 - `[ENDED]`：会话已退出，保留最后快照；迟到提示词不得改变快照或恢复为 `[LIVE]`。
 - `[ERROR]`：本次运行不能安全继续。
@@ -85,14 +85,14 @@ viewer 的所有页面共享同一套终端网格，不为单个状态临时决�
 - 默认主题为 `auto`：可确认浅色背景时使用 `latte`，其余情况使用 `mocha`。用户确认的主题名称保存到 Prompt Pane 用户配置；`PROMPT_PANE_THEME` 可临时覆盖。
 - 真彩色终端使用精确 24-bit RGB；不支持时由渲染层降级到 256 色；`NO_COLOR` 下移除颜色并使用字重、文字和符号保持层级。
 - 未选中提示词编号与正文都使用终端正常前景色；当前选中 prompt 的编号与正文、主要操作使用主题强调色。折叠提示等真正次要信息使用弱化色，`NO_COLOR` 下以加粗区分当前选中 prompt。
-- `READY` 与 `LIVE` 使用成功色，`ERROR` 使用错误色，`ENDED` 使用弱化色。限额低于 50% 使用正常色，50%～79% 使用警告色，80% 及以上使用危险色。
+- `READY` 使用强调色，表示进程已启动但提示词链路尚未确认；`LIVE` 使用成功色，`ERROR` 使用错误色，`ENDED` 使用弱化色。限额低于 50% 使用正常色，50%～79% 使用警告色，80% 及以上使用危险色。
 - 不使用 Nerd Font 图标；颜色不得成为理解状态的唯一方式。
 
 ### 主题设置
 
 - `h` 打开的帮助页直接包含主题设置，不再进入第二层页面；`↑`／`↓` 切换并实时预览，`Enter` 原子保存并应用，`Esc` 或 `h` 取消未保存预览并关闭帮助。
-- 帮助页统一以 `Help` 为页面标题；`[READY]` 状态下增加 `Connection` 区块，说明首次 prompt 才开始确认 Hook，并仅在 prompt 未出现时给出 `/hooks` 排查步骤，不把正常初始状态表述为故障。区块固定按 `Connection`（仅适用时）、`Viewer`、`Navigate`、`Prompt`、`Zellij defaults`、`Theme`／`Theme preview`、`About` 排列；`Zellij defaults` 只列与当前 70/30 工作区直接相关的默认聚焦、鼠标／键盘 resize 和全屏操作，并说明自定义键位可能不同；`About` 固定在末尾，只显示当前版本、Codex Hooks／Zellij／Bubble Tea 技术基础、Token Tracker 视觉来源和支持环境。页面标题与各区块标题使用主题强调色，区块正文、快捷键说明和未选中的主题名称使用终端正常前景色；弱化色只用于不可用、被覆盖或语义预览中明确标记的次要信息。
-- 主题列表只包含六套可保存的内置主题，不显示仅用于首次解析的 `auto`；当前配置为 `auto` 时，打开帮助页直接选中按终端背景解析出的 `latte` 或 `mocha`，保存后写入该明确主题。名称按最长主题动态对齐，颜色样本从同一列开始；每个名称后必须显示对应调色板的颜色样本。`PgUp`／`PgDn` 和滚轮继续滚动帮助，切换主题时自动让当前主题保持可见，`20x6` 必须可完成预览与保存。
+- 帮助页统一以 `Help` 为页面标题；`[READY]` 状态下增加 `Connection` 区块，说明首次 prompt 才开始确认 Hook，并仅在 prompt 未出现时给出 `/hooks` 排查步骤，不把正常初始状态表述为故障。区块固定按 `Connection`（仅适用时）、`Viewer`、`Navigate`、`Prompt`、`Theme`／`Theme preview`、`Zellij defaults`、`About` 排列，使当前 viewer 操作和主题先于低频的复用工具说明；`Zellij defaults` 只列与当前 70/30 工作区直接相关的默认聚焦、鼠标／键盘 resize 和全屏操作，并说明自定义键位可能不同；`About` 固定在末尾，只显示当前版本、Codex Hooks／Zellij／Bubble Tea 技术基础、Token Tracker 视觉来源和支持环境。页面标题与各区块标题使用主题强调色，区块正文、快捷键说明和未选中的主题名称使用终端正常前景色；弱化色只用于不可用、被覆盖或语义预览中明确标记的次要信息。
+- 主题列表只包含六套可保存的内置主题，不显示仅用于首次解析的 `auto`；当前配置为 `auto` 时，打开帮助页直接选中按终端背景解析出的 `latte` 或 `mocha`，宽度允许时用 `recommended` 标记该解析结果，保存后写入该明确主题。已保存主题在宽度允许时使用 `current` 标记；正在预览其他主题时同时保留原 `current` 标记，窄宽度保留选中箭头而省略文字标签。名称按最长主题和状态标签动态对齐，颜色样本从同一列开始；每个名称后必须显示对应调色板的颜色样本。`PgUp`／`PgDn` 和滚轮继续滚动帮助，切换主题时自动让当前主题保持可见，`20x6` 必须可完成预览与保存。
 - 主题切换、保存和关闭操作集中显示在固定页脚，主题区块不重复操作说明。主题列表后固定显示带当前主题名称的 `Theme preview · <name>` 语义预览，不读取或复用真实会话内容；状态／prompt／操作、指标、Git／弱化／错误按三个稳定语义组分行，再在组内按可用宽度换行。示例文字和数值保持不变，只随当前预览主题换色，并覆盖 `LIVE`、普通提示词、选中提示词、主要操作、Total、Model、Limit、Git 分支／增删／未跟踪、弱化文字和错误状态。
 - `PROMPT_PANE_THEME` 生效时帮助页显示环境覆盖来源；允许预览但不允许保存被覆盖的设置。
 - 配置只保存主题名称，不得包含 prompt、会话指标、路径、凭据或历史。

@@ -455,7 +455,7 @@ func TestHelpPreviewsAndCancelsThemeSelection(t *testing.T) {
 	updated, _ := model.Update(tea.KeyPressMsg{Code: 'h'})
 	model = updated.(Model)
 	help := strings.Join(model.helpLines(), "\n")
-	if !model.showHelp || !strings.Contains(help, "mocha") || !strings.Contains(help, "●●●●●●") {
+	if !model.showHelp || !strings.Contains(help, "mocha") || !strings.Contains(help, "current") || !strings.Contains(help, "●●●●●●") {
 		t.Fatalf("help did not embed theme palettes: %q", help)
 	}
 	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyDown})
@@ -476,7 +476,7 @@ func TestHelpResolvesAutoWithoutListingIt(t *testing.T) {
 	updated, _ := model.Update(tea.KeyPressMsg{Code: 'h'})
 	model = updated.(Model)
 	output := strings.Join(model.helpLines(), "\n")
-	if strings.Contains(output, " auto") || model.themeName != theme.Mocha || !strings.Contains(output, "› mocha") {
+	if strings.Contains(output, " auto") || model.themeName != theme.Mocha || !strings.Contains(output, "› mocha") || !strings.Contains(output, "recommended") {
 		t.Fatalf("auto was not resolved to an explicit dark theme: name=%q output=%q", model.themeName, output)
 	}
 }
@@ -504,7 +504,7 @@ func TestHelpThemeColumnsAndSectionColors(t *testing.T) {
 		t.Fatalf("help body repeated fixed footer actions: %q", output)
 	}
 	plainOutput := ansi.Strip(strings.Join(lines, "\n"))
-	ordered := []string{"\n Viewer\n", "\n Navigate\n", "\n Prompt\n", "\n Zellij defaults\n", "\n Theme\n", "\n Theme preview", "\n About\n"}
+	ordered := []string{"\n Viewer\n", "\n Navigate\n", "\n Prompt\n", "\n Theme\n", "\n Theme preview", "\n Zellij defaults\n", "\n About\n"}
 	previous := -1
 	for _, section := range ordered {
 		index := strings.Index(plainOutput, section)
@@ -1292,5 +1292,41 @@ func TestReadyTroubleshootingIsResponsive(t *testing.T) {
 		if !foundHooks {
 			t.Fatalf("%dx%d troubleshooting never exposed /hooks", size[0], size[1])
 		}
+	}
+}
+
+func TestReadyStateShowsGuidanceAfterDelayAndClearsOnLive(t *testing.T) {
+	for _, size := range [][2]int{{20, 6}, {24, 10}, {32, 12}, {48, 20}, {80, 24}} {
+		model := Model{width: size[0], height: size[1], noColor: true, snapshot: ipc.Snapshot{State: "ready"}}
+		updated, _ := model.Update(readyGuidanceMsg{})
+		model = updated.(Model)
+		output := model.render()
+		if !strings.Contains(output, "/hooks") || !strings.Contains(output, "Restart codex.pp") {
+			t.Fatalf("%dx%d delayed guidance is missing: %q", size[0], size[1], output)
+		}
+		for _, line := range strings.Split(output, "\n") {
+			if ansi.StringWidth(line) > size[0] {
+				t.Fatalf("%dx%d delayed guidance exceeded width: %q", size[0], size[1], line)
+			}
+		}
+
+		updated, _ = model.Update(snapshotMsg{snapshot: ipc.Snapshot{State: "live"}})
+		model = updated.(Model)
+		if output := model.render(); strings.Contains(output, "/hooks") || model.readyGuidance {
+			t.Fatalf("%dx%d live state retained delayed guidance: %q", size[0], size[1], output)
+		}
+	}
+}
+
+func TestReadyAndLiveUseDistinctStateColors(t *testing.T) {
+	model := Model{width: 48, height: 20, snapshot: ipc.Snapshot{State: "ready"}}
+	model.applyTheme(theme.Mocha)
+	roles := model.visualRoles()
+	if got, want := model.styleState("[READY]"), lipgloss.NewStyle().Foreground(lipgloss.Color(roles.Accent)).Render("[READY]"); got != want {
+		t.Fatalf("ready state color = %q, want %q", got, want)
+	}
+	model.snapshot.State = "live"
+	if got, want := model.styleState("[LIVE]"), lipgloss.NewStyle().Foreground(lipgloss.Color(roles.Success)).Render("[LIVE]"); got != want {
+		t.Fatalf("live state color = %q, want %q", got, want)
 	}
 }

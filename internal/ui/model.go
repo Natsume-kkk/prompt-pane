@@ -30,6 +30,7 @@ var (
 const (
 	collapsedLineLimit    = 8
 	collapsedVisibleLines = 6
+	readyGuidanceDelay    = 10 * time.Second
 )
 
 type snapshotMsg struct {
@@ -37,6 +38,7 @@ type snapshotMsg struct {
 }
 
 type streamEndedMsg struct{}
+type readyGuidanceMsg struct{}
 
 type themeSavedMsg struct{ name string }
 type themeSaveFailedMsg struct{ err error }
@@ -83,6 +85,7 @@ type Model struct {
 	selecting       bool
 	dragging        bool
 	textSelected    bool
+	readyGuidance   bool
 	selectionStart  textPoint
 	selectionEnd    textPoint
 }
@@ -103,7 +106,11 @@ func New(decoder *json.Decoder) Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(readSnapshot(m.decoder), func() tea.Msg { return tea.RequestBackgroundColor() })
+	return tea.Batch(
+		readSnapshot(m.decoder),
+		tea.Tick(readyGuidanceDelay, func(time.Time) tea.Msg { return readyGuidanceMsg{} }),
+		func() tea.Msg { return tea.RequestBackgroundColor() },
+	)
 }
 
 func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -234,6 +241,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		added := len(msg.snapshot.Prompts) - len(m.snapshot.Prompts)
 		wasFollowing := m.following
 		m.snapshot = msg.snapshot
+		if m.snapshot.State != "ready" || len(m.snapshot.Prompts) > 0 {
+			m.readyGuidance = false
+		}
 		if len(m.snapshot.Prompts) == 0 {
 			m.selectedID = ""
 			m.expanded = make(map[string]bool)
@@ -255,6 +265,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		readCmd := readSnapshot(m.decoder)
 		return m, readCmd
+	case readyGuidanceMsg:
+		if m.snapshot.State == "ready" && len(m.snapshot.Prompts) == 0 {
+			m.readyGuidance = true
+		}
 	case themeSavedMsg:
 		m.themeName = msg.name
 		m.themeSource = config.ThemeConfig
@@ -820,13 +834,6 @@ func (m Model) helpLines() []string {
 			" Enter   Expand/fold",
 			" Drag    Copy text",
 			" c       Fold all",
-			"",
-			" Zellij defaults",
-			" Alt+←/→ Focus pane",
-			" Drag edge Resize",
-			" Alt+=/- Grow/shrink",
-			" Ctrl+p f Fullscreen",
-			" Custom keys vary",
 		)
 	} else {
 		entries = append(entries,
@@ -845,18 +852,11 @@ func (m Model) helpLines() []string {
 			helpEntry("Enter", "Expand or fold"),
 			helpEntry("Drag", "Copy visible text"),
 			helpEntry("c", "Fold all"),
-			"",
-			" Zellij defaults",
-			helpEntry("Alt+←/→", "Focus pane"),
-			helpEntry("Drag edge", "Resize panes"),
-			helpEntry("Alt+=/-", "Grow/shrink pane"),
-			helpEntry("Ctrl+p f", "Toggle fullscreen"),
-			m.styleMuted(" Custom bindings may differ"),
 		)
 	}
 	for index, entry := range entries {
 		switch strings.TrimSpace(entry) {
-		case "Help", "Connection", "Viewer", "Navigate", "Prompt", "Zellij defaults":
+		case "Help", "Connection", "Viewer", "Navigate", "Prompt":
 			entries[index] = m.styleAction(entry)
 		}
 	}
@@ -872,6 +872,20 @@ func (m Model) helpLines() []string {
 			marker = "› "
 		}
 		label := fmt.Sprintf(" %s%-*s", marker, nameWidth, name)
+		if m.width >= 32 {
+			status := ""
+			original := m.themeOriginal
+			if original == theme.Auto {
+				original = theme.Resolve(theme.Auto, m.lightBackground).Name
+			}
+			if name == original {
+				status = "current"
+				if m.themeOriginal == theme.Auto && m.themeSource == config.ThemeDefault {
+					status = "recommended"
+				}
+			}
+			label += fmt.Sprintf("  %-11s", status)
+		}
 		if m.noColor {
 			if index == m.themeIndex {
 				label = lipgloss.NewStyle().Bold(true).Render(label)
@@ -887,6 +901,24 @@ func (m Model) helpLines() []string {
 		entries = append(entries, "", m.styleWarning(" "+theme.Environment+" overrides saved settings"))
 	} else if m.themeMessage != "" {
 		entries = append(entries, "", m.styleWarning(" "+m.themeMessage))
+	}
+	entries = append(entries, "", m.styleAction(" Zellij defaults"))
+	if m.width < 32 {
+		entries = append(entries,
+			" Alt+←/→ Focus pane",
+			" Drag edge Resize",
+			" Alt+=/- Grow/shrink",
+			" Ctrl+p f Fullscreen",
+			" Custom keys vary",
+		)
+	} else {
+		entries = append(entries,
+			helpEntry("Alt+←/→", "Focus pane"),
+			helpEntry("Drag edge", "Resize panes"),
+			helpEntry("Alt+=/-", "Grow/shrink pane"),
+			helpEntry("Ctrl+p f", "Toggle fullscreen"),
+			m.styleMuted(" Custom bindings may differ"),
+		)
 	}
 	entries = append(entries, "", m.styleAction(" About"), " Prompt Pane v"+appversion.Current)
 	if m.width < 32 {
@@ -1259,7 +1291,7 @@ func (m Model) styleState(label string) string {
 	case "live":
 		return m.styleColor(label, m.visualRoles().Success)
 	case "ready":
-		return m.styleColor(label, m.visualRoles().Success)
+		return m.styleColor(label, m.visualRoles().Accent)
 	case "error":
 		return m.styleColor(label, m.visualRoles().Error)
 	default:
@@ -1307,6 +1339,9 @@ func (m Model) bodyLines() []string {
 func (m Model) layoutBody() bodyLayout {
 	if len(m.snapshot.Prompts) == 0 {
 		notice := stateNotice(m.snapshot.State)
+		if m.snapshot.State == "ready" && m.readyGuidance {
+			notice = m.readyGuidanceNotice()
+		}
 		if m.snapshot.Notice != "" {
 			notice = m.snapshot.Notice
 		}
@@ -1359,6 +1394,13 @@ func (m Model) layoutBody() bodyLayout {
 		layout.prompts = append(layout.prompts, promptRange{start: start, end: len(layout.lines), long: isLong})
 	}
 	return layout
+}
+
+func (m Model) readyGuidanceNotice() string {
+	if m.width < 32 {
+		return "1 /hooks  2 Review\n3 Restart codex.pp"
+	}
+	return "Prompt hook not confirmed\n1. Open /hooks in Codex.\n2. Review Prompt Pane.\n3. Restart codex.pp."
 }
 
 func foldSummary(hidden, width int, selected bool) string {

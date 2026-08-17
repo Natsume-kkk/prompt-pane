@@ -129,6 +129,10 @@ func (a App) setupCodex() int {
 	if err != nil {
 		return a.fail("cannot locate the Prompt Pane executable")
 	}
+	previouslyManaged, err := shortcut.Managed(codexPath)
+	if err != nil {
+		return a.fail(err.Error())
+	}
 	changed, err := a.ensureCodexSetup(codexPath, executable, false)
 	if err != nil {
 		return a.fail(err.Error())
@@ -139,8 +143,19 @@ func (a App) setupCodex() int {
 	if code := a.checkEnvironment(true); code != 0 {
 		return code
 	}
-	fmt.Fprintln(a.Out, "Setup complete. Start Codex with `codex.pp`.")
+	writeSetupCompletion(a.Out, !previouslyManaged)
 	return 0
+}
+
+func writeSetupCompletion(out io.Writer, firstInstall bool) {
+	fmt.Fprintln(out, "Setup complete.")
+	if !firstInstall {
+		fmt.Fprintln(out, "Run `codex.pp` when ready.")
+		return
+	}
+	fmt.Fprintln(out, "1. Run `codex.pp`.")
+	fmt.Fprintln(out, "2. Submit your first prompt.")
+	fmt.Fprintln(out, "3. If it does not appear, open `/hooks` in Codex, review Prompt Pane, then restart `codex.pp`.")
 }
 
 func (a App) ensureCodexSetup(codexPath, executable string, beforeLaunch bool) (bool, error) {

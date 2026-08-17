@@ -27,6 +27,8 @@ try {
         if ($LASTEXITCODE -ne 0) {
             throw "go build failed with exit code $LASTEXITCODE"
         }
+        $hash = (Get-FileHash -LiteralPath $output -Algorithm SHA256).Hash.ToLowerInvariant()
+        Set-Content -LiteralPath "$output.sha256" -Value "$hash  prompt-pane.exe" -Encoding Ascii
     } finally {
         Pop-Location
     }

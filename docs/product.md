@@ -8,12 +8,13 @@
 
 ## 用户路径
 
-1. 用户在终端中打开 PowerShell 并进入工作目录。
+1. 首次使用或升级时，用户在 PowerShell 中执行 README 提供的一条安装命令；脚本下载并校验当前 Windows x64 Release，将程序安装到当前用户目录，再调用 `setup codex` 完成组件安装和完整诊断。重跑同一命令执行幂等升级，不要求 Go、Git、管理员权限或修改系统 `PATH`。
 2. 用户运行 `codex.pp`；兼容入口 `prompt-pane codex` 继续可用，Codex 参数保持结构化 argv 原样转发。
-3. Prompt Pane 检查 Codex、插件、`codex.pp` 快捷入口和 Zellij；缺失或过期时列出受管组件并自动修复，成功后继续本次 Codex 启动，不要求用户确认或执行第二条命令。
-4. Zellij 创建左 70%、右 30% 的工作区，左侧获得焦点；保留窗格边框与鼠标 resize，但本次会话不显示边框悬停高亮和 resize 帮助文字，并将首次点击直通目标窗格，使用户不必先单独聚焦 viewer。
-5. 用户在左侧提交的提示词在 1 秒内显示到右侧。
-6. 退出工作区后回到可正常使用的 PowerShell。
+3. 首次安装后，用户按完成提示运行 `codex.pp` 并提交第一条 prompt；如果右侧未显示，再在 Codex 中打开 `/hooks` 审查 Prompt Pane 并重新运行 `codex.pp`。程序不得代替用户信任 Hook，也不得把尚未提交首条 prompt 误判为 Hook 故障。
+4. Prompt Pane 检查 Codex、插件、`codex.pp` 快捷入口和 Zellij；缺失或过期时列出受管组件并自动修复，成功后继续本次 Codex 启动，不要求用户确认或执行第二条修复命令。
+5. Zellij 创建左 70%、右 30% 的工作区，左侧获得焦点；保留窗格边框与鼠标 resize，但本次会话不显示边框悬停高亮和 resize 帮助文字，并将首次点击直通目标窗格，使用户不必先单独聚焦 viewer。
+6. 用户在左侧提交的提示词在 1 秒内显示到右侧。
+7. 退出工作区后回到可正常使用的 PowerShell。
 
 ## 行为约束
 
@@ -42,6 +43,9 @@
 
 ## 后续安装体验要求
 
+- GitHub 用户入口必须是一条兼容 Windows PowerShell 5.1 与 PowerShell 7 的命令；引导脚本只从项目 GitHub Release 下载 Windows x64 产物和摘要，不调用 GitHub API、不执行未校验的二进制，并支持显式固定版本。仓库、Release 或产物尚未公开时不得声称外部用户可以一键安装。
+- 引导脚本必须先下载到临时目录、校验 SHA-256，再以原子替换安装到当前用户的 Prompt Pane 数据目录；下载、校验或安装失败时保留原有可用版本。脚本不得要求管理员权限、修改 PowerShell 执行策略、Profile 或系统 `PATH`。
+- 引导脚本必须覆盖 Windows x64、PowerShell 5.1／7、TLS 1.2、系统代理、自定义 `PROMPT_PANE_HOME`、空格／中文／非系统盘路径、重复安装、固定版本、摘要不匹配、网络失败和正在使用的目标文件。组织策略禁止内联脚本时，README 必须提供先下载再执行的等价路径。
 - 对用户只暴露一条 `prompt-pane setup codex` 初始化命令；程序列出需要处理的受管组件后，自动完成环境探测、兼容版本选择、下载校验、Codex 插件安装、`codex.pp` 快捷入口安装及与 `doctor` 相同的完整只读检查，不要求用户确认、逐步选择实现细节或另行运行诊断命令。完整检查失败时 setup 必须返回非零退出码，只有全部通过才显示启动命令。
 - `setup codex` 和 `doctor` 必须明确校验 Windows x64 与可用的 PowerShell 5.1／7；Codex、用户配置目录和快捷入口通过系统接口及 `PATH` 发现，不假定用户名、盘符或 npm 安装位置，包含空格和中文的绝对路径必须可用。
 - 下载或持久安装前，程序必须探测 Prompt Pane、Codex 配置和 `codex.pp` 目标目录的真实写入能力；权限不足时指出具体目标并停止，已经存在且与当前版本一致的受管组件不得重复改写。
