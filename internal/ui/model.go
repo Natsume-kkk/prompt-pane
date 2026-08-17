@@ -784,23 +784,34 @@ func (m Model) helpLines() []string {
 	entries := []string{" Help", ""}
 	if m.snapshot.State == "ready" {
 		entries = append(entries, " Connection", "")
-		if m.width < 48 {
+		if m.width < 32 {
 			entries = append(entries,
-				" First prompt starts",
-				" Hook confirmation.",
-				" If prompt missing:",
-				" 1. Open /hooks.",
-				" 2. Review and trust it.",
-				" 3. Restart codex.pp",
+				"   Hook confirms on",
+				"   first prompt.",
+				"   If missing:",
+				"   1. Open /hooks.",
+				"   2. Review/trust.",
+				"   3. Restart",
+				"   codex.pp",
+				"",
+			)
+		} else if m.width < 52 {
+			entries = append(entries,
+				"   First prompt starts",
+				"   Hook confirmation.",
+				"   If prompt missing:",
+				"   1. Open /hooks.",
+				"   2. Review and trust it.",
+				"   3. Restart codex.pp",
 				"",
 			)
 		} else {
 			entries = append(entries,
-				" Hook confirmation starts with the first prompt.",
-				" If a prompt does not appear:",
-				" 1. Open /hooks in Codex.",
-				" 2. Review and trust Prompt Pane.",
-				" 3. Restart codex.pp.",
+				"   Hook confirmation starts with the first prompt.",
+				"   If a prompt does not appear:",
+				"   1. Open /hooks in Codex.",
+				"   2. Review and trust Prompt Pane.",
+				"   3. Restart codex.pp.",
 				"",
 			)
 		}
@@ -808,21 +819,21 @@ func (m Model) helpLines() []string {
 	if m.width < 32 {
 		entries = append(entries,
 			" Viewer",
-			" Ctrl+X  Close pane",
-			" h/Esc   Close help",
+			"   Ctrl+X Close pane",
+			"   h/Esc  Close help",
 			"",
 			" Navigate",
-			" ↑/k     Previous",
-			" ↓/j     Next",
-			" PgUp    Page up",
-			" PgDn    Page down",
-			" Home    First",
-			" End     Latest",
+			"   ↑/k    Previous",
+			"   ↓/j    Next",
+			"   PgUp   Page up",
+			"   PgDn   Page down",
+			"   Home   First",
+			"   End    Latest",
 			"",
 			" Prompt",
-			" Enter   Expand/fold",
-			" Drag    Copy text",
-			" c       Fold all",
+			"   Enter Expand/fold",
+			"   Drag   Copy text",
+			"   c      Fold all",
 		)
 	} else {
 		entries = append(entries,
@@ -851,10 +862,7 @@ func (m Model) helpLines() []string {
 	}
 	entries = append(entries, "", m.styleAction(" Theme"))
 	names := theme.SelectableNames()
-	nameWidth := 0
-	for _, name := range names {
-		nameWidth = max(nameWidth, ansi.StringWidth(name))
-	}
+	nameWidth := helpLabelWidth()
 	for index, name := range names {
 		marker := "  "
 		if index == m.themeIndex {
@@ -870,21 +878,25 @@ func (m Model) helpLines() []string {
 		}
 		entries = append(entries, label+m.themeSwatches(name))
 	}
-	entries = append(entries, "", m.styleAction(" Theme preview")+" · "+m.themeName)
+	previewTitle := m.styleAction(" Theme preview")
+	if ansi.StringWidth(" Theme preview · "+m.themeName) <= m.width {
+		previewTitle += " · " + m.themeName
+	}
+	entries = append(entries, "", previewTitle)
 	entries = append(entries, m.themePreviewLines()...)
 	if m.themeSource == config.ThemeEnvironment {
-		entries = append(entries, "", m.styleWarning(" "+theme.Environment+" overrides saved settings"))
+		entries = append(entries, "", m.styleWarning("   "+theme.Environment+" overrides saved settings"))
 	} else if m.themeMessage != "" {
-		entries = append(entries, "", m.styleWarning(" "+m.themeMessage))
+		entries = append(entries, "", m.styleWarning("   "+m.themeMessage))
 	}
 	entries = append(entries, "", m.styleAction(" Zellij defaults"))
 	if m.width < 32 {
 		entries = append(entries,
-			" Alt+←/→ Focus pane",
-			" Drag edge Resize",
-			" Alt+=/- Grow/shrink",
-			" Ctrl+p f Fullscreen",
-			" Custom keys vary",
+			"   Alt+←/→ Focus",
+			"   Drag edge Resize",
+			"   Alt+=/- Resize",
+			"   Ctrl+p f Full",
+			"   Custom keys vary",
 		)
 	} else {
 		entries = append(entries,
@@ -892,31 +904,35 @@ func (m Model) helpLines() []string {
 			helpEntry("Drag edge", "Resize panes"),
 			helpEntry("Alt+=/-", "Grow/shrink pane"),
 			helpEntry("Ctrl+p f", "Toggle fullscreen"),
-			m.styleMuted(" Custom bindings may differ"),
+			m.styleMuted("   Custom bindings may differ"),
 		)
 	}
-	entries = append(entries, "", m.styleAction(" About"), " Prompt Pane v"+appversion.Current)
+	versionLine := "   Prompt Pane v" + appversion.Current
+	if ansi.StringWidth(versionLine) > m.width {
+		versionLine = "   Prompt Pane " + appversion.Current
+	}
+	entries = append(entries, "", m.styleAction(" About"), versionLine)
 	if m.width < 32 {
 		entries = append(entries,
-			" Codex Hooks",
-			" Zellij "+zellij.Version,
-			" Bubble Tea TUI",
-			" Token Tracker styles",
-			" Windows x64",
-			" PowerShell",
+			"   Codex Hooks",
+			"   Zellij "+zellij.Version,
+			"   Bubble Tea TUI",
+			"   Token Tracker",
+			"   Windows x64",
+			"   PowerShell",
 		)
 	} else if m.width < 48 {
 		entries = append(entries,
-			" Codex Hooks · Zellij "+zellij.Version,
-			" Bubble Tea TUI",
-			" Token Tracker visuals",
-			" Windows x64 · PowerShell",
+			"   Codex Hooks · Zellij "+zellij.Version,
+			"   Bubble Tea TUI",
+			"   Token Tracker visuals",
+			"   Windows x64 · PowerShell",
 		)
 	} else {
 		entries = append(entries,
-			" Codex Hooks · Zellij "+zellij.Version+" · Bubble Tea",
-			" Themes and status based on Token Tracker",
-			" Windows x64 · PowerShell",
+			"   Codex Hooks · Zellij "+zellij.Version+" · Bubble Tea",
+			"   Themes and status based on Token Tracker",
+			"   Windows x64 · PowerShell",
 		)
 	}
 	return entries
@@ -948,7 +964,7 @@ func (m Model) themePreviewLines() []string {
 	}
 	lines := make([]string, 0, len(groups))
 	for _, group := range groups {
-		lines = append(lines, packPreviewLines(group, max(1, m.width-1))...)
+		lines = append(lines, packPreviewLines(group, max(1, m.width-3))...)
 	}
 	return lines
 }
@@ -962,14 +978,14 @@ func packPreviewLines(items []string, width int) []string {
 			candidate = current + "  " + item
 		}
 		if current != "" && ansi.StringWidth(candidate) > width {
-			lines = append(lines, " "+current)
+			lines = append(lines, "   "+current)
 			current = item
 			continue
 		}
 		current = candidate
 	}
 	if current != "" {
-		lines = append(lines, " "+current)
+		lines = append(lines, "   "+current)
 	}
 	return lines
 }
@@ -999,7 +1015,21 @@ func (m Model) themeSwatches(name string) string {
 }
 
 func helpEntry(key, description string) string {
-	return fmt.Sprintf(" %-9s  %s", key, description)
+	return fmt.Sprintf("   %-*s  %s", helpLabelWidth(), key, description)
+}
+
+func helpLabelWidth() int {
+	width := 0
+	for _, label := range []string{
+		"Ctrl+X", "h/Esc", "↑/k", "↓/j", "PgUp/PgDn", "Home", "End",
+		"Enter", "Drag", "c", "Alt+←/→", "Drag edge", "Alt+=/-", "Ctrl+p f",
+	} {
+		width = max(width, ansi.StringWidth(label))
+	}
+	for _, name := range theme.SelectableNames() {
+		width = max(width, ansi.StringWidth(name))
+	}
+	return width
 }
 
 func (m Model) renderStatusBlock(maxLines int) []string {

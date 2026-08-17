@@ -546,6 +546,47 @@ func TestHelpThemeColumnsAndSectionColors(t *testing.T) {
 			break
 		}
 	}
+	if nameColumn != 3 {
+		t.Fatalf("theme names start at column %d, want shared content column 3", nameColumn)
+	}
+	shortcutLine := ansi.Strip(helpEntry("Ctrl+X", "Close viewer pane"))
+	if shortcutColumn := ansi.StringWidth(shortcutLine[:strings.Index(shortcutLine, "Ctrl+X")]); shortcutColumn != nameColumn {
+		t.Fatalf("shortcut column = %d, theme name column = %d", shortcutColumn, nameColumn)
+	}
+	descriptionColumn := ansi.StringWidth(shortcutLine[:strings.Index(shortcutLine, "Close viewer pane")])
+	if descriptionColumn != swatchColumn {
+		t.Fatalf("description column = %d, swatch column = %d", descriptionColumn, swatchColumn)
+	}
+	for _, content := range []string{"[LIVE]", "Custom bindings may differ", "Prompt Pane v" + appversion.Current} {
+		found := false
+		for _, line := range lines {
+			plain := ansi.Strip(line)
+			index := strings.Index(plain, content)
+			if index < 0 {
+				continue
+			}
+			found = true
+			if column := ansi.StringWidth(plain[:index]); column != nameColumn {
+				t.Fatalf("content %q starts at column %d, want %d: %q", content, column, nameColumn, plain)
+			}
+			break
+		}
+		if !found {
+			t.Fatalf("help missed content %q", content)
+		}
+	}
+}
+
+func TestHelpUnifiedGridFitsFixedSizes(t *testing.T) {
+	for _, size := range [][2]int{{20, 6}, {24, 10}, {32, 12}, {48, 20}, {80, 24}} {
+		model := Model{width: size[0], height: size[1], noColor: true, showHelp: true, themeName: theme.Mocha, snapshot: ipc.Snapshot{State: "ready"}}
+		model.applyTheme(theme.Mocha)
+		for _, line := range model.helpLines() {
+			if ansi.StringWidth(line) > size[0] && !strings.Contains(line, "■") {
+				t.Fatalf("%dx%d help line exceeded width: %q", size[0], size[1], line)
+			}
+		}
+	}
 }
 
 func TestHelpThemePickerUsesTokenTrackerSquarePalette(t *testing.T) {
@@ -1276,7 +1317,7 @@ func TestReadyStateRoutesTroubleshootingThroughHelp(t *testing.T) {
 
 	updated, _ := model.Update(tea.KeyPressMsg{Code: 'h'})
 	model = updated.(Model)
-	if output := model.render(); !strings.Contains(output, "Help") || !strings.Contains(output, "Connection") || !strings.Contains(output, "Hook confirmation starts with the first prompt") || !strings.Contains(output, "/hooks") || !strings.Contains(output, "Review and trust Prompt Pane") || !strings.Contains(output, "Restart codex.pp") {
+	if output := model.render(); !strings.Contains(output, "Help") || !strings.Contains(output, "Connection") || !strings.Contains(output, "First prompt starts") || !strings.Contains(output, "/hooks") || !strings.Contains(output, "Review and trust it") || !strings.Contains(output, "Restart codex.pp") {
 		t.Fatalf("ready help did not explain how to confirm the connection: %q", output)
 	}
 
