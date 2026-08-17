@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="680" viewBox="0 0 1280 680" role="img" aria-labelledby="title desc">
+  <title id="title">Prompt Pane 70/30 workspace</title>
+  <desc id="desc">A Zellij workspace with Codex CLI using the left seventy percent and Prompt Pane showing the current run prompts in the right thirty percent.</desc>
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#09090f" flood-opacity="0.55"/>
+    </filter>
+    <clipPath id="windowClip">
+      <rect x="24" y="24" width="1232" height="632" rx="22"/>
+    </clipPath>
+  </defs>
+
+  <rect width="1280" height="680" fill="#11111b"/>
+  <rect x="24" y="24" width="1232" height="632" rx="22" fill="#181825" stroke="#45475a" stroke-width="2" filter="url(#shadow)"/>
+
+  <g clip-path="url(#windowClip)">
+    <rect x="24" y="24" width="1232" height="60" fill="#1e1e2e"/>
+    <circle cx="58" cy="54" r="7" fill="#f38ba8"/>
+    <circle cx="82" cy="54" r="7" fill="#f9e2af"/>
+    <circle cx="106" cy="54" r="7" fill="#a6e3a1"/>
+    <text x="640" y="60" text-anchor="middle" fill="#7f849c" font-family="Consolas, 'Cascadia Mono', monospace" font-size="17">Zellij workspace</text>
+
+    <rect x="24" y="84" width="862" height="572" fill="#11111b"/>
+    <rect x="886" y="84" width="370" height="572" fill="#181825"/>
+    <rect x="884" y="84" width="4" height="572" fill="#45475a"/>
+
+    <rect x="44" y="104" width="822" height="42" rx="10" fill="#1e1e2e"/>
+    <rect x="906" y="104" width="330" height="42" rx="10" fill="#1e1e2e"/>
+    <rect x="44" y="104" width="8" height="42" rx="4" fill="#89b4fa"/>
+    <rect x="906" y="104" width="8" height="42" rx="4" fill="#cba6f7"/>
+    <text x="70" y="131" fill="#89b4fa" font-family="Consolas, 'Cascadia Mono', monospace" font-size="19" font-weight="700">70% · CODEX CLI</text>
+    <text x="932" y="131" fill="#cba6f7" font-family="Consolas, 'Cascadia Mono', monospace" font-size="19" font-weight="700">30% · PROMPT PANE</text>
+
+    <text x="64" y="190" fill="#a6e3a1" font-family="Consolas, 'Cascadia Mono', monospace" font-size="20">›</text>
+    <text x="92" y="190" fill="#cdd6f4" font-family="Consolas, 'Cascadia Mono', monospace" font-size="20">Add keyboard navigation to the help view</text>
+    <rect x="64" y="218" width="700" height="1" fill="#313244"/>
+
+    <text x="64" y="262" fill="#89b4fa" font-family="Consolas, 'Cascadia Mono', monospace" font-size="18">• Reading the viewer state</text>
+    <text x="64" y="304" fill="#89b4fa" font-family="Consolas, 'Cascadia Mono', monospace" font-size="18">• Updating keyboard handling</text>
+    <text x="64" y="346" fill="#a6e3a1" font-family="Consolas, 'Cascadia Mono', monospace" font-size="18">✓ Tests passed</text>
+
+    <rect x="64" y="386" width="748" height="118" rx="12" fill="#1e1e2e" stroke="#313244"/>
+    <text x="88" y="424" fill="#cdd6f4" font-family="Consolas, 'Cascadia Mono', monospace" font-size="18">Keyboard navigation is ready.</text>
+    <text x="88" y="459" fill="#a6adc8" font-family="Consolas, 'Cascadia Mono', monospace" font-size="17">Arrow keys and j/k now move between</text>
+    <text x="88" y="488" fill="#a6adc8" font-family="Consolas, 'Cascadia Mono', monospace" font-size="17">items without leaving the terminal.</text>
+
+    <text x="64" y="596" fill="#a6e3a1" font-family="Consolas, 'Cascadia Mono', monospace" font-size="18">›</text>
+    <rect x="92" y="579" width="2" height="24" fill="#cdd6f4"/>
+
+    <rect x="914" y="174" width="314" height="92" rx="12" fill="#313244" stroke="#cba6f7" stroke-width="2"/>
+    <text x="932" y="205" fill="#cba6f7" font-family="Consolas, 'Cascadia Mono', monospace" font-size="17" font-weight="700">1</text>
+    <text x="961" y="205" fill="#cdd6f4" font-family="Consolas, 'Cascadia Mono', monospace" font-size="16">Add keyboard navigation</text>
+    <text x="961" y="232" fill="#cdd6f4" font-family="Consolas, 'Cascadia Mono', monospace" font-size="16">to the help view</text>
+
+    <text x="932" y="310" fill="#7f849c" font-family="Consolas, 'Cascadia Mono', monospace" font-size="17" font-weight="700">2</text>
+    <text x="961" y="310" fill="#bac2de" font-family="Consolas, 'Cascadia Mono', monospace" font-size="16">Check the compact layout</text>
+    <text x="961" y="337" fill="#bac2de" font-family="Consolas, 'Cascadia Mono', monospace" font-size="16">at 24 columns</text>
+
+    <text x="932" y="388" fill="#7f849c" font-family="Consolas, 'Cascadia Mono', monospace" font-size="17" font-weight="700">3</text>
+    <text x="961" y="388" fill="#bac2de" font-family="Consolas, 'Cascadia Mono', monospace" font-size="16">Run all tests</text>
+
+    <rect x="906" y="538" width="330" height="1" fill="#313244"/>
+    <text x="922" y="574" fill="#a6e3a1" font-family="Consolas, 'Cascadia Mono', monospace" font-size="16" font-weight="700">[LIVE]</text>
+    <text x="1220" y="574" text-anchor="end" fill="#89b4fa" font-family="Consolas, 'Cascadia Mono', monospace" font-size="16">h help</text>
+    <text x="922" y="610" fill="#a6adc8" font-family="Consolas, 'Cascadia Mono', monospace" font-size="15">Total: 42.8k · Limit: 18%</text>
+  </g>
+</svg>

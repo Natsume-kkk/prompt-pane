@@ -70,6 +70,8 @@ cd prompt-pane
 
 Prompt Pane 不会替换原来的 `codex` 命令。只有 `codex.pp` 会进入双栏工作区，Codex 参数会原样转发：
 
+![Prompt Pane 使用时的 70/30 工作区：左侧 Codex CLI，右侧当前运行的提示词](docs/assets/prompt-pane-workspace.svg)
+
 ```powershell
 codex.pp
 codex.pp resume
