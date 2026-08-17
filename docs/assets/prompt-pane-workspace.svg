@@ -1,67 +1,101 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="680" viewBox="0 0 1280 680" role="img" aria-labelledby="title desc">
-  <title id="title">Prompt Pane 70/30 workspace</title>
-  <desc id="desc">A Zellij workspace with Codex CLI using the left seventy percent and Prompt Pane showing the current run prompts in the right thirty percent.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">Prompt Pane 70/30 terminal workspace</title>
+  <desc id="desc">A faithful schematic of the real Zellij workspace: Codex runs in the focused left pane and Prompt Pane lists prompts with a status bar in the right pane.</desc>
   <defs>
-    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
-      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#09090f" flood-opacity="0.55"/>
-    </filter>
-    <clipPath id="windowClip">
-      <rect x="24" y="24" width="1232" height="632" rx="22"/>
-    </clipPath>
+    <clipPath id="leftPane"><rect x="5" y="5" width="888" height="710"/></clipPath>
+    <clipPath id="rightPane"><rect x="895" y="5" width="380" height="710"/></clipPath>
   </defs>
 
-  <rect width="1280" height="680" fill="#11111b"/>
-  <rect x="24" y="24" width="1232" height="632" rx="22" fill="#181825" stroke="#45475a" stroke-width="2" filter="url(#shadow)"/>
+  <rect width="1280" height="720" fill="#1e1e2e"/>
 
-  <g clip-path="url(#windowClip)">
-    <rect x="24" y="24" width="1232" height="60" fill="#1e1e2e"/>
-    <circle cx="58" cy="54" r="7" fill="#f38ba8"/>
-    <circle cx="82" cy="54" r="7" fill="#f9e2af"/>
-    <circle cx="106" cy="54" r="7" fill="#a6e3a1"/>
-    <text x="640" y="60" text-anchor="middle" fill="#7f849c" font-family="Consolas, 'Cascadia Mono', monospace" font-size="17">Zellij workspace</text>
+  <!-- Zellij panes: 70% Codex, 30% Prompt Pane. -->
+  <rect x="4" y="4" width="890" height="712" fill="none" stroke="#a6e22e" stroke-width="2"/>
+  <rect x="894" y="4" width="382" height="712" fill="none" stroke="#7f849c" stroke-width="2"/>
+  <rect x="15" y="0" width="139" height="18" fill="#1e1e2e"/>
+  <text x="20" y="14" fill="#a6e22e" font-family="Cascadia Mono, Consolas, 'Microsoft YaHei UI', monospace" font-size="14" font-weight="700">┌ prompt-pane ─</text>
+  <rect x="758" y="0" width="127" height="18" fill="#1e1e2e"/>
+  <text x="763" y="14" fill="#a6e22e" font-family="Cascadia Mono, Consolas, monospace" font-size="13" font-weight="700">SCROLL:  0/240</text>
 
-    <rect x="24" y="84" width="862" height="572" fill="#11111b"/>
-    <rect x="886" y="84" width="370" height="572" fill="#181825"/>
-    <rect x="884" y="84" width="4" height="572" fill="#45475a"/>
+  <g clip-path="url(#leftPane)" font-family="Cascadia Mono, Consolas, 'Microsoft YaHei UI', monospace">
+    <text x="15" y="37" fill="#cdd6f4" font-size="15">通过。</text>
 
-    <rect x="44" y="104" width="822" height="42" rx="10" fill="#1e1e2e"/>
-    <rect x="906" y="104" width="330" height="42" rx="10" fill="#1e1e2e"/>
-    <rect x="44" y="104" width="8" height="42" rx="4" fill="#89b4fa"/>
-    <rect x="906" y="104" width="8" height="42" rx="4" fill="#cba6f7"/>
-    <text x="70" y="131" fill="#89b4fa" font-family="Consolas, 'Cascadia Mono', monospace" font-size="19" font-weight="700">70% · CODEX CLI</text>
-    <text x="932" y="131" fill="#cba6f7" font-family="Consolas, 'Cascadia Mono', monospace" font-size="19" font-weight="700">30% · PROMPT PANE</text>
+    <text x="15" y="78" fill="#cdd6f4" font-size="15">✓ 已读取 README、产品规格与安装脚本</text>
+    <text x="15" y="107" fill="#a6adc8" font-size="15">• 检查 Windows x64 安装入口与错误提示</text>
+    <text x="15" y="136" fill="#a6adc8" font-size="15">• 核对 Codex Hook、Zellij 和用户目录边界</text>
 
-    <text x="64" y="190" fill="#a6e3a1" font-family="Consolas, 'Cascadia Mono', monospace" font-size="20">›</text>
-    <text x="92" y="190" fill="#cdd6f4" font-family="Consolas, 'Cascadia Mono', monospace" font-size="20">Add keyboard navigation to the help view</text>
-    <rect x="64" y="218" width="700" height="1" fill="#313244"/>
+    <text x="15" y="181" fill="#a6adc8" font-size="15">• Ran</text>
+    <text x="67" y="181" fill="#f38ba8" font-size="15">go test ./...</text>
+    <text x="15" y="210" fill="#a6adc8" font-size="15">  └ ok  github.com/Natsume-kkk/prompt-pane/internal/...</text>
 
-    <text x="64" y="262" fill="#89b4fa" font-family="Consolas, 'Cascadia Mono', monospace" font-size="18">• Reading the viewer state</text>
-    <text x="64" y="304" fill="#89b4fa" font-family="Consolas, 'Cascadia Mono', monospace" font-size="18">• Updating keyboard handling</text>
-    <text x="64" y="346" fill="#a6e3a1" font-family="Consolas, 'Cascadia Mono', monospace" font-size="18">✓ Tests passed</text>
+    <text x="15" y="255" fill="#a6adc8" font-size="15">• Ran</text>
+    <text x="67" y="255" fill="#f38ba8" font-size="15">.\scripts\build.cmd</text>
+    <text x="15" y="284" fill="#a6adc8" font-size="15">  └ Built dist\prompt-pane.exe</text>
 
-    <rect x="64" y="386" width="748" height="118" rx="12" fill="#1e1e2e" stroke="#313244"/>
-    <text x="88" y="424" fill="#cdd6f4" font-family="Consolas, 'Cascadia Mono', monospace" font-size="18">Keyboard navigation is ready.</text>
-    <text x="88" y="459" fill="#a6adc8" font-family="Consolas, 'Cascadia Mono', monospace" font-size="17">Arrow keys and j/k now move between</text>
-    <text x="88" y="488" fill="#a6adc8" font-family="Consolas, 'Cascadia Mono', monospace" font-size="17">items without leaving the terminal.</text>
+    <line x1="7" y1="326" x2="887" y2="326" stroke="#7f849c" stroke-width="1"/>
 
-    <text x="64" y="596" fill="#a6e3a1" font-family="Consolas, 'Cascadia Mono', monospace" font-size="18">›</text>
-    <rect x="92" y="579" width="2" height="24" fill="#cdd6f4"/>
+    <text x="15" y="369" fill="#cdd6f4" font-size="15">安装链路检查完成，可以使用。</text>
+    <text x="15" y="401" fill="#cdd6f4" font-size="15">脚本会校验 SHA-256，并在失败时指出下载、权限或</text>
+    <text x="15" y="430" fill="#cdd6f4" font-size="15">Zellij 环节，不会修改 PowerShell Profile 或系统 PATH。</text>
 
-    <rect x="914" y="174" width="314" height="92" rx="12" fill="#313244" stroke="#cba6f7" stroke-width="2"/>
-    <text x="932" y="205" fill="#cba6f7" font-family="Consolas, 'Cascadia Mono', monospace" font-size="17" font-weight="700">1</text>
-    <text x="961" y="205" fill="#cdd6f4" font-family="Consolas, 'Cascadia Mono', monospace" font-size="16">Add keyboard navigation</text>
-    <text x="961" y="232" fill="#cdd6f4" font-family="Consolas, 'Cascadia Mono', monospace" font-size="16">to the help view</text>
+    <text x="15" y="478" fill="#7f849c" font-size="14">— Worked for 1m 24s —</text>
+    <line x1="7" y1="500" x2="887" y2="500" stroke="#7f849c" stroke-width="1"/>
 
-    <text x="932" y="310" fill="#7f849c" font-family="Consolas, 'Cascadia Mono', monospace" font-size="17" font-weight="700">2</text>
-    <text x="961" y="310" fill="#bac2de" font-family="Consolas, 'Cascadia Mono', monospace" font-size="16">Check the compact layout</text>
-    <text x="961" y="337" fill="#bac2de" font-family="Consolas, 'Cascadia Mono', monospace" font-size="16">at 24 columns</text>
+    <text x="15" y="548" fill="#cdd6f4" font-size="15">› 再检查一下窄窗口下的提示词换行</text>
 
-    <text x="932" y="388" fill="#7f849c" font-family="Consolas, 'Cascadia Mono', monospace" font-size="17" font-weight="700">3</text>
-    <text x="961" y="388" fill="#bac2de" font-family="Consolas, 'Cascadia Mono', monospace" font-size="16">Run all tests</text>
+    <text x="15" y="596" fill="#cdd6f4" font-size="15">• 我会检查固定尺寸渲染与 Unicode 换行边界。</text>
+    <text x="15" y="632" fill="#89b4fa" font-size="15">• Running UI checks…</text>
 
-    <rect x="906" y="538" width="330" height="1" fill="#313244"/>
-    <text x="922" y="574" fill="#a6e3a1" font-family="Consolas, 'Cascadia Mono', monospace" font-size="16" font-weight="700">[LIVE]</text>
-    <text x="1220" y="574" text-anchor="end" fill="#89b4fa" font-family="Consolas, 'Cascadia Mono', monospace" font-size="16">h help</text>
-    <text x="922" y="610" fill="#a6adc8" font-family="Consolas, 'Cascadia Mono', monospace" font-size="15">Total: 42.8k · Limit: 18%</text>
+    <line x1="7" y1="665" x2="887" y2="665" stroke="#7f849c" stroke-width="1"/>
+    <text x="15" y="695" fill="#cdd6f4" font-size="16">› </text>
+    <rect x="35" y="681" width="8" height="18" fill="#cdd6f4"/>
+    <text x="15" y="711" fill="#a6e22e" font-size="13">prompt-pane</text>
+    <text x="122" y="711" fill="#7f849c" font-size="13">·</text>
+    <text x="142" y="711" fill="#f9e2af" font-size="13">weekly 68% left</text>
+    <text x="283" y="711" fill="#7f849c" font-size="13">·</text>
+    <text x="303" y="711" fill="#f9e2af" font-size="13">Context 91% left</text>
+    <text x="460" y="711" fill="#7f849c" font-size="13">·</text>
+    <text x="480" y="711" fill="#89b4fa" font-size="13">gpt-5.6-sol medium</text>
+  </g>
+
+  <g clip-path="url(#rightPane)" font-family="Cascadia Mono, Consolas, 'Microsoft YaHei UI', monospace">
+    <text x="908" y="37" fill="#7f849c" font-size="15">1</text>
+    <text x="936" y="37" fill="#cdd6f4" font-size="15">检查项目文档</text>
+
+    <text x="908" y="77" fill="#7f849c" font-size="15">2</text>
+    <text x="936" y="77" fill="#cdd6f4" font-size="15">确认安装脚本支持范围</text>
+
+    <text x="908" y="117" fill="#7f849c" font-size="15">3</text>
+    <text x="936" y="117" fill="#cdd6f4" font-size="15">检查下载失败时的提示</text>
+
+    <text x="908" y="157" fill="#7f849c" font-size="15">4</text>
+    <text x="936" y="157" fill="#cdd6f4" font-size="15">运行 Windows 构建检查</text>
+
+    <text x="908" y="197" fill="#7f849c" font-size="15">5</text>
+    <text x="936" y="197" fill="#cdd6f4" font-size="15">核对 SHA-256</text>
+
+    <text x="908" y="237" fill="#7f849c" font-size="15">6</text>
+    <text x="936" y="237" fill="#cdd6f4" font-size="15">确认 Hook 信任步骤</text>
+
+    <text x="908" y="277" fill="#7f849c" font-size="15">7</text>
+    <text x="936" y="277" fill="#cdd6f4" font-size="15">检查窄窗口提示词换行</text>
+
+    <text x="908" y="317" fill="#7f849c" font-size="15">8</text>
+    <text x="936" y="317" fill="#cdd6f4" font-size="15">再运行一次完整测试</text>
+
+    <line x1="895" y1="655" x2="1275" y2="655" stroke="#7f849c" stroke-width="1"/>
+    <text x="908" y="679" fill="#a6e3a1" font-size="14" font-weight="700">[LIVE]</text>
+    <text x="970" y="679" fill="#f38ba8" font-size="14">(main)</text>
+    <text x="1027" y="679" fill="#7f849c" font-size="14">|</text>
+    <text x="1045" y="679" fill="#f9e2af" font-size="14">Total: 42.8k</text>
+    <text x="1225" y="679" fill="#89b4fa" font-size="14">h help</text>
+
+    <text x="908" y="704" fill="#cdd6f4" font-size="13">Limit: 5h:</text>
+    <rect x="994" y="691" width="58" height="16" fill="#f38ba8"/>
+    <rect x="1052" y="691" width="21" height="16" fill="#45475a"/>
+    <text x="1081" y="704" fill="#f38ba8" font-size="13">74%</text>
+    <text x="1117" y="704" fill="#7f849c" font-size="13">| Ctx:</text>
+    <rect x="1174" y="691" width="52" height="16" fill="#a6e3a1"/>
+    <rect x="1226" y="691" width="19" height="16" fill="#45475a"/>
+    <text x="1251" y="704" fill="#a6e3a1" font-size="13">73%</text>
   </g>
 </svg>
