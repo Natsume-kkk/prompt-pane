@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -488,8 +489,16 @@ func TestHelpThemeColumnsAndSectionColors(t *testing.T) {
 	if !slices.Contains(lines, accent.Render(" Help")) || !slices.Contains(lines, accent.Render(" Theme")) {
 		t.Fatalf("help section titles did not use the theme accent: %q", lines)
 	}
+	for _, heading := range []string{" Viewer", " Navigate", " Prompt"} {
+		if !slices.Contains(lines, accent.Render(heading)) {
+			t.Fatalf("help missed grouped heading %q: %q", heading, lines)
+		}
+	}
 	if !slices.Contains(lines, helpEntry("Ctrl+X", "Close viewer pane")) {
 		t.Fatalf("help body did not use the normal foreground: %q", lines)
+	}
+	if output := strings.Join(lines, "\n"); strings.Contains(output, "preview · Enter save") {
+		t.Fatalf("help body repeated fixed footer actions: %q", output)
 	}
 
 	nameColumn, swatchColumn := -1, -1
@@ -545,6 +554,9 @@ func TestHelpSemanticPreviewUsesEveryThemeRole(t *testing.T) {
 				t.Fatalf("theme=%s preview missed semantic sample %q: %q", name, ansi.Strip(expected), output)
 			}
 		}
+		if lines := model.themePreviewLines(); len(lines) != 3 {
+			t.Fatalf("theme=%s preview did not keep three semantic rows: %q", name, lines)
+		}
 	}
 }
 
@@ -591,7 +603,7 @@ func TestStatusWaitsForFirstMetricsUpdate(t *testing.T) {
 	for _, state := range []string{"ready", "live"} {
 		model := Model{width: 48, height: 12, noColor: true, snapshot: ipc.Snapshot{State: state}}
 		output := model.render()
-		if !strings.Contains(output, "Metrics: waiting for Codex response…") {
+		if !strings.Contains(output, "Metrics available after first response") || strings.Contains(output, "waiting for Codex response") {
 			t.Fatalf("state=%s hid pending metrics: %q", state, output)
 		}
 		for _, line := range strings.Split(output, "\n") {
@@ -652,6 +664,49 @@ func TestDefaultStatusKeepsTokenTrackerBarsAndWideStatusCompresses(t *testing.T)
 	wideLines := wide.renderStatusBlock(4)
 	if len(wideLines) >= len(narrowLines) {
 		t.Fatalf("wide status did not compress rows: narrow=%q wide=%q", narrowLines, wideLines)
+	}
+}
+
+func TestStatusUsesSemanticRowsAndElasticBars(t *testing.T) {
+	metrics := &provider.SessionMetrics{
+		Branch: "main", TotalTokens: 129000, ContextWindow: 258000, ContextUsedPercent: 20,
+		SevenDay: &provider.QuotaWindow{UsedPercent: 68, ResetsAt: time.Now().Add(3*time.Hour + time.Minute).Unix()},
+	}
+	for _, width := range []int{24, 32, 48, 56, 80} {
+		model := Model{width: width, height: 20, noColor: true, snapshot: ipc.Snapshot{State: "live", Metrics: metrics}}
+		lines := model.renderStatusBlock(4)
+		output := strings.Join(lines, "\n")
+		for _, line := range lines {
+			if ansi.StringWidth(line) > width {
+				t.Fatalf("width=%d status line overflowed: %q", width, line)
+			}
+		}
+		if !strings.Contains(output, "Limit: 5h: --") || !strings.Contains(output, "7d:") || !strings.Contains(output, "Ctx: 258k") || strings.Contains(output, "258k Ctx:") {
+			t.Fatalf("width=%d status lost label-first semantic groups: %q", width, output)
+		}
+		if strings.Contains(output, "5h: -- | 7d:") {
+			t.Fatalf("width=%d split the limit group with a divider: %q", width, output)
+		}
+		if !strings.Contains(output, "█") || !strings.Contains(output, "░") {
+			t.Fatalf("width=%d status lost progress bars: %q", width, output)
+		}
+	}
+
+	medium := Model{width: 56, height: 20, noColor: true, snapshot: ipc.Snapshot{State: "live", Metrics: metrics}}
+	mediumLines := medium.renderStatusBlock(4)
+	if len(mediumLines) != 3 || !strings.Contains(mediumLines[1], "Limit:") || !strings.Contains(mediumLines[2], "Ctx:") {
+		t.Fatalf("medium status did not use limit/context rows: %q", mediumLines)
+	}
+	for _, line := range mediumLines[1:] {
+		if width := ansi.StringWidth(line); width < medium.width-1 {
+			t.Fatalf("medium elastic row left avoidable space: width=%d row=%q", width, line)
+		}
+	}
+
+	wide := medium
+	wide.width = 80
+	if lines := wide.renderStatusBlock(4); len(lines) != 2 || !strings.Contains(lines[1], " | Ctx:") {
+		t.Fatalf("wide status did not combine semantic groups: %q", lines)
 	}
 }
 
@@ -1097,7 +1152,7 @@ func TestViewerHasNoBrandHeaderAndFooterOwnsStatus(t *testing.T) {
 	if strings.Contains(output, "Prompt Pane") || !strings.Contains(output, "[LIVE]") || strings.Contains(output, "1 [LIVE]") || !strings.Contains(output, "h help") {
 		t.Fatalf("viewer chrome was not lightweight: %q", output)
 	}
-	if !strings.Contains(output, "Metrics: waiting for Codex response…") {
+	if !strings.Contains(output, "Metrics available after first response") {
 		t.Fatalf("status area did not explain pending metrics: %q", output)
 	}
 }
@@ -1123,7 +1178,7 @@ func TestReadyStateRoutesTroubleshootingThroughHelp(t *testing.T) {
 
 	updated, _ := model.Update(tea.KeyPressMsg{Code: 'h'})
 	model = updated.(Model)
-	if output := model.render(); !strings.Contains(output, "Hook is not confirmed yet") || !strings.Contains(output, "/hooks") || !strings.Contains(output, "Restart codex.pp") {
+	if output := model.render(); !strings.Contains(output, "Help") || !strings.Contains(output, "Connection") || !strings.Contains(output, "Hook confirmation starts with the first prompt") || !strings.Contains(output, "/hooks") || !strings.Contains(output, "Restart codex.pp") {
 		t.Fatalf("ready help did not explain how to confirm the connection: %q", output)
 	}
 

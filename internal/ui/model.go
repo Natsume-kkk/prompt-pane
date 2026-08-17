@@ -766,47 +766,59 @@ func (m Model) compactMetrics() string {
 }
 
 func (m Model) helpLines() []string {
-	entries := make([]string, 0, 20)
+	entries := []string{" Help", ""}
 	if m.snapshot.State == "ready" {
-		entries = append(entries,
-			" Troubleshoot",
-			"",
-			" Hook is not confirmed yet.",
-			" First prompt may start the session.",
-			" If a prompt does not appear:",
-			" 1. Run /hooks in Codex.",
-			" 2. Review Prompt Pane.",
-			" 3. Restart codex.pp.",
-			"",
-			" Shortcuts",
-			"",
-		)
-	} else {
-		entries = append(entries, " Help", "")
+		entries = append(entries, " Connection", "")
+		if m.width < 48 {
+			entries = append(entries,
+				" First prompt starts",
+				" Hook confirmation.",
+				" If prompt missing:",
+				" 1. Open /hooks.",
+				" 2. Review plugin.",
+				" 3. Restart codex.pp",
+				"",
+			)
+		} else {
+			entries = append(entries,
+				" Hook confirmation starts with the first prompt.",
+				" If a prompt does not appear:",
+				" 1. Open /hooks in Codex.",
+				" 2. Review Prompt Pane.",
+				" 3. Restart codex.pp.",
+				"",
+			)
+		}
 	}
 	if m.width < 32 {
 		entries = append(entries,
+			" Viewer",
 			" Ctrl+X  Close pane",
 			" h/Esc   Close help",
+			" Navigate",
 			" ↑/k     Previous",
 			" ↓/j     Next",
 			" PgUp    Page up",
 			" PgDn    Page down",
 			" Home    First",
 			" End     Latest",
+			" Prompt",
 			" Enter   Expand/fold",
 			" Drag    Copy text",
 			" c       Fold all",
 		)
 	} else {
 		entries = append(entries,
+			" Viewer",
 			helpEntry("Ctrl+X", "Close viewer pane"),
 			helpEntry("h/Esc", "Close help"),
+			" Navigate",
 			helpEntry("↑/k", "Previous prompt"),
 			helpEntry("↓/j", "Next prompt"),
 			helpEntry("PgUp/PgDn", "Scroll page"),
 			helpEntry("Home", "First prompt"),
 			helpEntry("End", "Latest prompt"),
+			" Prompt",
 			helpEntry("Enter", "Expand or fold"),
 			helpEntry("Drag", "Copy visible text"),
 			helpEntry("c", "Fold all"),
@@ -814,11 +826,11 @@ func (m Model) helpLines() []string {
 	}
 	for index, entry := range entries {
 		switch strings.TrimSpace(entry) {
-		case "Help", "Troubleshoot", "Shortcuts":
+		case "Help", "Connection", "Viewer", "Navigate", "Prompt":
 			entries[index] = m.styleAction(entry)
 		}
 	}
-	entries = append(entries, "", m.styleAction(" Theme"), " ↑/↓ preview · Enter save")
+	entries = append(entries, "", m.styleAction(" Theme"))
 	names := theme.SelectableNames()
 	nameWidth := 0
 	for _, name := range names {
@@ -855,19 +867,29 @@ func (m Model) themePreviewLines() []string {
 		m.styleColor("+12", colors.Added) + " " +
 		m.styleColor("-3", colors.Deleted) + " " +
 		m.styleColor("?1", colors.Untracked)
-	items := []string{
-		m.styleColor("[LIVE]", colors.Success),
-		"1 Other prompt",
-		m.styleSelected("2 Selected prompt"),
-		m.styleAction("h help"),
-		m.styleColor("Total: 2.4M", colors.Token),
-		m.styleColor("Model: gpt-5.6", colors.Model),
-		m.styleColor("Limit:", colors.Label) + " " + m.styleColor("66%", colors.Warning),
-		git,
-		m.styleMuted("Muted text"),
-		m.styleColor("[ERROR]", colors.Error),
+	groups := [][]string{
+		{
+			m.styleColor("[LIVE]", colors.Success),
+			"1 Other prompt",
+			m.styleSelected("2 Selected prompt"),
+			m.styleAction("h help"),
+		},
+		{
+			m.styleColor("Total: 2.4M", colors.Token),
+			m.styleColor("Model: gpt-5.6", colors.Model),
+			m.styleColor("Limit:", colors.Label) + " " + m.styleColor("66%", colors.Warning),
+		},
+		{
+			git,
+			m.styleMuted("Muted text"),
+			m.styleColor("[ERROR]", colors.Error),
+		},
 	}
-	return packPreviewLines(items, max(1, m.width-1))
+	lines := make([]string, 0, len(groups))
+	for _, group := range groups {
+		lines = append(lines, packPreviewLines(group, max(1, m.width-1))...)
+	}
+	return lines
 }
 
 func packPreviewLines(items []string, width int) []string {
@@ -918,20 +940,11 @@ func (m Model) renderStatusBlock(maxLines int) []string {
 	}
 	lines := []string{m.renderStatusHeader()}
 	if m.snapshot.Metrics == nil {
-		waiting := " Metrics: waiting for Codex response…"
+		waiting := " Metrics available after first response"
 		return append(lines, ansi.Truncate(waiting, m.width, ""))
 	}
 	remaining := maxLines - 1
-	rows := m.renderMetricRows(10, true)
-	if !statusRowsFit(rows, remaining, m.width) {
-		rows = m.renderMetricRows(10, false)
-	}
-	if !statusRowsFit(rows, remaining, m.width) {
-		rows = m.renderMetricRows(6, false)
-	}
-	if !statusRowsFit(rows, remaining, m.width) {
-		rows = m.renderMetricRows(0, false)
-	}
+	rows := m.renderMetricRows(remaining)
 	if len(rows) > remaining {
 		rows = rows[:remaining]
 	}
@@ -939,18 +952,6 @@ func (m Model) renderStatusBlock(maxLines int) []string {
 		rows[index] = ansi.Truncate(rows[index], m.width, "")
 	}
 	return append(lines, rows...)
-}
-
-func statusRowsFit(rows []string, maxLines, width int) bool {
-	if len(rows) > maxLines {
-		return false
-	}
-	for _, row := range rows {
-		if ansi.StringWidth(row) > width {
-			return false
-		}
-	}
-	return true
 }
 
 func (m Model) renderStatusHeader() string {
@@ -1039,62 +1040,119 @@ func (m Model) renderBranch(metrics *provider.SessionMetrics, details bool) stri
 	return " (" + branch + ")"
 }
 
-func (m Model) renderMetricRows(barWidth int, resetVisible bool) []string {
-	pieces := m.renderMetricPieces(barWidth, resetVisible)
-	if len(pieces) == 0 {
+func (m Model) renderMetricRows(maxRows int) []string {
+	if maxRows < 1 || m.snapshot.Metrics == nil {
 		return nil
 	}
 	available := max(1, m.width-1)
-	rows := make([]string, 0, len(pieces))
-	current := ""
-	for _, piece := range pieces {
-		candidate := piece
-		if current != "" {
-			candidate = current + " | " + piece
-		}
-		if current != "" && ansi.StringWidth(candidate) > available {
-			rows = append(rows, prefixStatus(current))
-			current = piece
-		} else {
-			current = candidate
+	if m.width >= 72 {
+		if row, ok := m.combinedMetricRow(available); ok {
+			return []string{prefixStatus(row)}
 		}
 	}
-	if current != "" {
-		rows = append(rows, prefixStatus(current))
+	if maxRows >= 2 {
+		if limit, ok := m.limitMetricRow(available); ok {
+			return []string{prefixStatus(limit), prefixStatus(m.contextMetricRow(available))}
+		}
+	}
+	rows := m.splitMetricRows(available)
+	if len(rows) > maxRows {
+		rows = rows[:maxRows]
+	}
+	for index := range rows {
+		rows[index] = prefixStatus(rows[index])
 	}
 	return rows
 }
 
-func (m Model) renderMetricPieces(barWidth int, resetVisible bool) []string {
-	metrics := m.snapshot.Metrics
-	if metrics == nil {
-		return nil
+func (m Model) combinedMetricRow(available int) (string, bool) {
+	build := func(barWidth int, resetVisible bool) string {
+		return m.limitMetricText(barWidth, resetVisible) + " | " + m.contextMetricText(barWidth)
 	}
-	colors := m.visualRoles()
-	pieces := make([]string, 0, 3)
-	if metrics.FiveHour != nil {
-		pieces = append(pieces, m.renderQuota("5h", metrics.FiveHour, barWidth, resetVisible))
-	} else {
-		pieces = append(pieces, m.styleColor("5h: --", colors.Label))
+	return fitElasticStatusRow(available, 4, build)
+}
+
+func (m Model) limitMetricRow(available int) (string, bool) {
+	return fitElasticStatusRow(available, 4, m.limitMetricText)
+}
+
+func fitElasticStatusRow(available, minimumBar int, build func(int, bool) string) (string, bool) {
+	if row := build(10, true); ansi.StringWidth(row) <= available {
+		return largestStatusBar(available, 10, true, build), true
 	}
-	if metrics.SevenDay != nil {
-		pieces = append(pieces, m.renderQuota("7d", metrics.SevenDay, barWidth, resetVisible))
-	} else {
-		pieces = append(pieces, m.styleColor("7d: --", colors.Label))
+	if row := build(minimumBar, false); ansi.StringWidth(row) <= available {
+		return largestStatusBar(available, minimumBar, false, build), true
 	}
-	if metrics.ContextUsedPercent > 0 {
-		label := "Ctx"
-		if metrics.ContextWindow > 0 {
-			label = compactNumber(metrics.ContextWindow) + " Ctx"
+	return "", false
+}
+
+func largestStatusBar(available, minimumBar int, resetVisible bool, build func(int, bool) string) string {
+	for barWidth := available; barWidth >= minimumBar; barWidth-- {
+		row := build(barWidth, resetVisible)
+		if ansi.StringWidth(row) <= available {
+			return row
 		}
-		pieces = append(pieces, m.styleColor(label+": ", colors.Label)+m.renderPercent(metrics.ContextUsedPercent, barWidth))
-	} else {
-		pieces = append(pieces, m.styleColor("Ctx: --", colors.Label))
 	}
-	if len(pieces) > 0 {
-		pieces[0] = m.styleColor("Limit: ", colors.Label) + pieces[0]
+	return build(0, false)
+}
+
+func (m Model) limitMetricText(barWidth int, resetVisible bool) string {
+	metrics := m.snapshot.Metrics
+	colors := m.visualRoles()
+	fiveHour := m.styleColor("5h: --", colors.Label)
+	if metrics.FiveHour != nil {
+		fiveHour = m.renderQuota("5h", metrics.FiveHour, barWidth, resetVisible)
 	}
-	return pieces
+	sevenDay := m.styleColor("7d: --", colors.Label)
+	if metrics.SevenDay != nil {
+		sevenDay = m.renderQuota("7d", metrics.SevenDay, barWidth, resetVisible)
+	}
+	return m.styleColor("Limit: ", colors.Label) + fiveHour + "  " + sevenDay
+}
+
+func (m Model) contextMetricRow(available int) string {
+	build := func(barWidth int, _ bool) string { return m.contextMetricText(barWidth) }
+	if row := build(4, false); ansi.StringWidth(row) <= available {
+		return largestStatusBar(available, 4, false, build)
+	}
+	return ansi.Truncate(build(0, false), available, "")
+}
+
+func (m Model) contextMetricText(barWidth int) string {
+	metrics := m.snapshot.Metrics
+	colors := m.visualRoles()
+	if metrics.ContextUsedPercent <= 0 {
+		return m.styleColor("Ctx: --", colors.Label)
+	}
+	value := ""
+	if metrics.ContextWindow > 0 {
+		value = compactNumber(metrics.ContextWindow) + "  "
+	}
+	return m.styleColor("Ctx: "+value, colors.Label) + m.renderPercent(metrics.ContextUsedPercent, barWidth)
+}
+
+func (m Model) splitMetricRows(available int) []string {
+	metrics := m.snapshot.Metrics
+	colors := m.visualRoles()
+	labelWidth := ansi.StringWidth("Limit: ")
+	quotaRow := func(prefix, label string, quota *provider.QuotaWindow) string {
+		base := m.styleColor(prefix, colors.Label)
+		if quota == nil {
+			return base + m.styleColor(label+": --", colors.Label)
+		}
+		build := func(barWidth int, _ bool) string {
+			return base + m.renderQuota(label, quota, barWidth, false)
+		}
+		if row := build(1, false); ansi.StringWidth(row) <= available {
+			return largestStatusBar(available, 1, false, build)
+		}
+		return ansi.Truncate(build(0, false), available, "")
+	}
+	return []string{
+		quotaRow("Limit: ", "5h", metrics.FiveHour),
+		quotaRow(strings.Repeat(" ", labelWidth), "7d", metrics.SevenDay),
+		m.contextMetricRow(available),
+	}
 }
 
 func (m Model) renderQuota(label string, quota *provider.QuotaWindow, barWidth int, resetVisible bool) string {
