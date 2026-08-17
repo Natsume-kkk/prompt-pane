@@ -130,10 +130,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.showHelp = false
 				m.helpOffset = 0
 				m.themeMessage = ""
-			case "left":
+			case "up":
 				m.moveTheme(-1)
 				m.revealHelpTheme()
-			case "right":
+			case "down":
 				m.moveTheme(1)
 				m.revealHelpTheme()
 			case "enter":
@@ -143,10 +143,6 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				name := theme.Names()[m.themeIndex]
 				return m, saveTheme(name)
-			case "up":
-				m.scrollHelp(-1)
-			case "down":
-				m.scrollHelp(1)
 			case "pgup":
 				m.scrollHelp(-m.bodyHeight())
 			case "pgdown":
@@ -728,9 +724,9 @@ func (m Model) renderFooter(compactHeight bool) string {
 		actions = "h troubleshoot"
 	}
 	if m.showHelp {
-		actions = "←→ theme · Enter save · Esc close"
+		actions = "↑↓ theme · Enter save · Esc close"
 		if compactHeight || m.width < 44 {
-			actions = "←→ · Enter · Esc"
+			actions = "↑↓ · Enter · Esc"
 		}
 	} else if m.snapshot.Metrics != nil && m.height < 6 {
 		actions = m.compactMetrics()
@@ -814,16 +810,21 @@ func (m Model) helpLines() []string {
 			helpEntry("c", "Fold all"),
 		)
 	}
-	for index := range entries {
-		entries[index] = m.styleMuted(entries[index])
+	for index, entry := range entries {
+		switch strings.TrimSpace(entry) {
+		case "Help", "Troubleshoot", "Shortcuts":
+			entries[index] = m.styleAction(entry)
+		default:
+			entries[index] = m.styleMuted(entry)
+		}
 	}
-	entries = append(entries, "", m.styleMuted(" Theme  ←/→ preview · Enter save"))
+	entries = append(entries, "", m.styleAction(" Theme  ↑/↓ preview · Enter save"))
 	for index, name := range theme.Names() {
 		marker := "  "
 		if index == m.themeIndex {
 			marker = "› "
 		}
-		label := fmt.Sprintf(" %-10s", marker+name)
+		label := fmt.Sprintf(" %s%-9s", marker, name)
 		if m.noColor {
 			if index == m.themeIndex {
 				label = lipgloss.NewStyle().Bold(true).Render(label)

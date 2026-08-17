@@ -435,7 +435,7 @@ func TestHelpPreviewsAndCancelsThemeSelection(t *testing.T) {
 	if !model.showHelp || !strings.Contains(model.render(), "mocha") || !strings.Contains(model.render(), "●●●●●●") {
 		t.Fatalf("help did not embed theme palettes: %q", model.render())
 	}
-	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	model = updated.(Model)
 	if model.themeName != theme.Latte || model.colors.Success != "#40a02b" {
 		t.Fatalf("theme preview = %q %#v", model.themeName, model.colors)
@@ -447,13 +447,51 @@ func TestHelpPreviewsAndCancelsThemeSelection(t *testing.T) {
 	}
 }
 
+func TestHelpThemeColumnsAndSectionColors(t *testing.T) {
+	model := Model{width: 80, height: 24, themeName: theme.Mocha, themeSource: config.ThemeConfig, snapshot: ipc.Snapshot{State: "live"}}
+	model.applyTheme(theme.Dracula)
+	updated, _ := model.Update(tea.KeyPressMsg{Code: 'h'})
+	model = updated.(Model)
+	lines := model.helpLines()
+
+	accent := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Resolve(theme.Dracula, false).Sapphire))
+	muted := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Resolve(theme.Dracula, false).Overlay0))
+	if !slices.Contains(lines, accent.Render(" Help")) || !slices.Contains(lines, accent.Render(" Theme  ↑/↓ preview · Enter save")) {
+		t.Fatalf("help section titles did not use the theme accent: %q", lines)
+	}
+	if !slices.Contains(lines, muted.Render(helpEntry("Ctrl+X", "Close viewer pane"))) {
+		t.Fatalf("help body did not use the theme muted color: %q", lines)
+	}
+
+	nameColumn, swatchColumn := -1, -1
+	for _, name := range theme.Names() {
+		for _, line := range lines {
+			plain := ansi.Strip(line)
+			nameIndex := strings.Index(plain, name)
+			swatchIndex := strings.Index(plain, "●")
+			if nameIndex < 0 || swatchIndex < 0 {
+				continue
+			}
+			gotNameColumn := ansi.StringWidth(plain[:nameIndex])
+			gotSwatchColumn := ansi.StringWidth(plain[:swatchIndex])
+			if nameColumn < 0 {
+				nameColumn, swatchColumn = gotNameColumn, gotSwatchColumn
+			}
+			if gotNameColumn != nameColumn || gotSwatchColumn != swatchColumn {
+				t.Fatalf("theme columns are not aligned: name=%s line=%q nameColumn=%d swatchColumn=%d", name, plain, gotNameColumn, gotSwatchColumn)
+			}
+			break
+		}
+	}
+}
+
 func TestHelpSavesThemeSelection(t *testing.T) {
 	t.Setenv(paths.EnvHome, t.TempDir())
 	model := Model{width: 48, height: 20, noColor: true, themeName: theme.Mocha, themeSource: config.ThemeConfig}
 	model.applyTheme(theme.Mocha)
 	updated, _ := model.Update(tea.KeyPressMsg{Code: 'h'})
 	model = updated.(Model)
-	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	model = updated.(Model)
 	updated, command := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	model = updated.(Model)
@@ -522,7 +560,7 @@ func TestEnvironmentThemeCanPreviewButNotSave(t *testing.T) {
 	model.applyTheme(theme.Mocha)
 	updated, _ := model.Update(tea.KeyPressMsg{Code: 'h'})
 	model = updated.(Model)
-	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	model = updated.(Model)
 	updated, command := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	model = updated.(Model)
