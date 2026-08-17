@@ -2,13 +2,44 @@ package zellij
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Natsume-kkk/prompt-pane/internal/paths"
 )
+
+func TestZellijRequestErrorExplainsProxyAndFallback(t *testing.T) {
+	for _, err := range []error{errors.New("synthetic network failure"), context.DeadlineExceeded} {
+		message := zellijRequestError(err).Error()
+		for _, expected := range []string{"GitHub", "HTTPS_PROXY", "Zellij 0.44.3", "PATH"} {
+			if !strings.Contains(message, expected) {
+				t.Fatalf("error %q is missing %q", message, expected)
+			}
+		}
+	}
+}
+
+func TestZellijStatusErrorIncludesHTTPStatusAndAction(t *testing.T) {
+	message := zellijStatusError(http.StatusNotFound).Error()
+	for _, expected := range []string{"HTTP 404", "pinned Zellij release", "HTTPS_PROXY"} {
+		if !strings.Contains(message, expected) {
+			t.Fatalf("error %q is missing %q", message, expected)
+		}
+	}
+}
+
+func TestZellijRequestErrorRedactsProxyCredentials(t *testing.T) {
+	message := zellijRequestError(errors.New("proxy http://synthetic-user:synthetic-password@proxy.example failed")).Error()
+	if strings.Contains(message, "synthetic-user") || strings.Contains(message, "synthetic-password") || !strings.Contains(message, "http://***@proxy.example") {
+		t.Fatalf("error did not redact proxy credentials: %q", message)
+	}
+}
 
 func TestReportingReaderPublishesDownloadedBytes(t *testing.T) {
 	var reports []int64

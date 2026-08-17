@@ -57,13 +57,29 @@ function Resolve-ReleaseBaseUrl {
 function Invoke-Download {
     param(
         [Parameter(Mandatory = $true)][string]$Uri,
-        [Parameter(Mandatory = $true)][string]$Destination
+        [Parameter(Mandatory = $true)][string]$Destination,
+        [Parameter(Mandatory = $true)][string]$Artifact
     )
 
-    Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $Destination
-    if (-not (Test-Path -LiteralPath $Destination -PathType Leaf)) {
-        throw "Download did not create the expected file: $Uri"
+    try {
+        Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $Destination
+    } catch {
+        throw (Format-DownloadFailure -Artifact $Artifact -Uri $Uri -Reason $_.Exception.Message)
     }
+    if (-not (Test-Path -LiteralPath $Destination -PathType Leaf)) {
+        throw "Downloaded $Artifact was not saved. Check temporary-directory permissions and available disk space, then retry. Source: $Uri"
+    }
+}
+
+function Format-DownloadFailure {
+    param(
+        [Parameter(Mandatory = $true)][string]$Artifact,
+        [Parameter(Mandatory = $true)][string]$Uri,
+        [Parameter(Mandatory = $true)][string]$Reason
+    )
+
+    $safeReason = $Reason -replace '(?i)(https?://)[^/\s@]+@', '$1***@'
+    return "Failed to download $Artifact from GitHub. Check that the requested Release and asset exist and that this PowerShell session can access GitHub through its proxy and TLS settings. Source: $Uri. Reason: $safeReason"
 }
 
 function Read-ExpectedHash {
@@ -72,7 +88,7 @@ function Read-ExpectedHash {
     $contents = Get-Content -LiteralPath $Path -Raw
     $match = [regex]::Match($contents, "(?i)\b[0-9a-f]{64}\b")
     if (-not $match.Success) {
-        throw "Release checksum file does not contain a SHA-256 value."
+        throw "The Prompt Pane checksum asset does not contain a 64-character SHA-256 value. Download the executable and checksum from the same GitHub Release, then retry."
     }
     return $match.Value.ToUpperInvariant()
 }
@@ -86,11 +102,15 @@ function Install-Binary {
 
     $actualHash = (Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash
     if ($actualHash -ne $ExpectedHash) {
-        throw "SHA-256 verification failed for the downloaded Prompt Pane executable."
+        throw "The downloaded Prompt Pane executable does not match the Release SHA-256. The file was not installed; retry the download and report the Release if the mismatch persists."
     }
 
     $destinationDirectory = Split-Path -Parent $Destination
-    New-Item -ItemType Directory -Force -Path $destinationDirectory | Out-Null
+    try {
+        New-Item -ItemType Directory -Force -Path $destinationDirectory | Out-Null
+    } catch {
+        throw "Cannot prepare the Prompt Pane install directory $destinationDirectory. Check write permissions and available disk space. Reason: $($_.Exception.Message)"
+    }
 
     if (Test-Path -LiteralPath $Destination -PathType Leaf) {
         $installedHash = (Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash
@@ -102,16 +122,24 @@ function Install-Binary {
 
     $staged = Join-Path $destinationDirectory (".prompt-pane-{0}.tmp" -f [Guid]::NewGuid().ToString("N"))
     $backup = Join-Path $destinationDirectory (".prompt-pane-{0}.bak" -f [Guid]::NewGuid().ToString("N"))
-    Copy-Item -LiteralPath $Source -Destination $staged
+    try {
+        Copy-Item -LiteralPath $Source -Destination $staged
+    } catch {
+        throw "Cannot stage Prompt Pane in $destinationDirectory. Check write permissions and available disk space. Reason: $($_.Exception.Message)"
+    }
 
     try {
-        if (Test-Path -LiteralPath $Destination -PathType Leaf) {
-            [IO.File]::Replace($staged, $Destination, $backup, $true)
-            return $backup
-        }
+        try {
+            if (Test-Path -LiteralPath $Destination -PathType Leaf) {
+                [IO.File]::Replace($staged, $Destination, $backup, $true)
+                return $backup
+            }
 
-        Move-Item -LiteralPath $staged -Destination $Destination
-        return ""
+            Move-Item -LiteralPath $staged -Destination $Destination
+            return ""
+        } catch {
+            throw "Cannot activate Prompt Pane at $Destination. Close running Prompt Pane processes and check write permissions, then retry. Reason: $($_.Exception.Message)"
+        }
     } finally {
         if (Test-Path -LiteralPath $staged) {
             Remove-Item -LiteralPath $staged -Force
@@ -154,12 +182,16 @@ $previousSecurityProtocol = [Net.ServicePointManager]::SecurityProtocol
 $backup = $null
 
 try {
-    New-Item -ItemType Directory -Path $temporaryDirectory | Out-Null
+    try {
+        New-Item -ItemType Directory -Path $temporaryDirectory | Out-Null
+    } catch {
+        throw "Cannot create the Prompt Pane temporary download directory. Check temporary-directory permissions and available disk space. Reason: $($_.Exception.Message)"
+    }
     [Net.ServicePointManager]::SecurityProtocol = $previousSecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
     Write-Host "[1/4] Downloading Prompt Pane $Version..."
-    Invoke-Download -Uri "$releaseBaseUrl/$assetName" -Destination $downloadedBinary
-    Invoke-Download -Uri "$releaseBaseUrl/$checksumName" -Destination $downloadedChecksum
+    Invoke-Download -Uri "$releaseBaseUrl/$assetName" -Destination $downloadedBinary -Artifact "Prompt Pane executable"
+    Invoke-Download -Uri "$releaseBaseUrl/$checksumName" -Destination $downloadedChecksum -Artifact "Prompt Pane checksum"
 
     Write-Host "[2/4] Verifying SHA-256..."
     $expectedHash = Read-ExpectedHash -Path $downloadedChecksum
@@ -171,7 +203,7 @@ try {
     Write-Host "[4/4] Configuring Codex integration..."
     & $destination setup codex
     if ($LASTEXITCODE -ne 0) {
-        throw "Prompt Pane setup failed with exit code $LASTEXITCODE."
+        throw "Prompt Pane setup failed with exit code $LASTEXITCODE. Review the preceding prompt-pane error for the failed component and corrective action."
     }
 
     if ($backup -and (Test-Path -LiteralPath $backup)) {
@@ -193,6 +225,10 @@ try {
 } finally {
     [Net.ServicePointManager]::SecurityProtocol = $previousSecurityProtocol
     if (Test-Path -LiteralPath $temporaryDirectory) {
-        Remove-Item -LiteralPath $temporaryDirectory -Recurse -Force
+        try {
+            Remove-Item -LiteralPath $temporaryDirectory -Recurse -Force
+        } catch {
+            Write-Warning "Could not remove the Prompt Pane temporary download directory: $($_.Exception.Message)"
+        }
     }
 }

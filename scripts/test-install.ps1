@@ -27,6 +27,56 @@ if (-not $temporaryRoot.StartsWith($systemTemporaryRoot, [StringComparison]::Ord
 
 try {
     New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
+
+    $downloadFailure = Format-DownloadFailure `
+        -Artifact "Prompt Pane checksum" `
+        -Uri "https://github.com/example/releases/download/v1.1.0/prompt-pane.exe.sha256" `
+        -Reason "synthetic network failure"
+    foreach ($expected in @("Prompt Pane checksum", "requested Release and asset", "proxy and TLS", "synthetic network failure")) {
+        if (-not $downloadFailure.Contains($expected)) {
+            throw "Download failure guidance is missing: $expected"
+        }
+    }
+
+    $redactedFailure = Format-DownloadFailure `
+        -Artifact "Prompt Pane executable" `
+        -Uri "https://github.com/example/prompt-pane.exe" `
+        -Reason "proxy http://synthetic-user:synthetic-password@proxy.example failed"
+    if ($redactedFailure.Contains("synthetic-user") -or $redactedFailure.Contains("synthetic-password") -or -not $redactedFailure.Contains("http://***@proxy.example")) {
+        throw "Download failure exposed synthetic proxy credentials."
+    }
+
+    $wrappedFailure = $false
+    try {
+        Invoke-Download `
+            -Uri "invalid://prompt-pane-test" `
+            -Destination (Join-Path $temporaryRoot "unreachable.exe") `
+            -Artifact "Prompt Pane executable"
+    } catch {
+        $wrappedFailure = $true
+        foreach ($expected in @("Prompt Pane executable", "GitHub", "proxy and TLS")) {
+            if (-not $_.Exception.Message.Contains($expected)) {
+                throw "Wrapped download failure guidance is missing: $expected"
+            }
+        }
+    }
+    if (-not $wrappedFailure) {
+        throw "Synthetic download failure was accepted."
+    }
+
+    $invalidChecksum = Join-Path $temporaryRoot "invalid.sha256"
+    Set-Content -LiteralPath $invalidChecksum -Value "not-a-checksum" -Encoding Ascii
+    try {
+        Read-ExpectedHash -Path $invalidChecksum | Out-Null
+        throw "Invalid checksum content was accepted."
+    } catch {
+        foreach ($expected in @("64-character SHA-256", "same GitHub Release")) {
+            if (-not $_.Exception.Message.Contains($expected)) {
+                throw "Checksum failure guidance is missing: $expected"
+            }
+        }
+    }
+
     $source = Join-Path $temporaryRoot "source.exe"
     $destination = Join-Path $temporaryRoot "用户 path\prompt-pane.exe"
 
@@ -53,6 +103,11 @@ try {
         Install-Binary -Source $source -Destination $destination -ExpectedHash ("0" * 64) | Out-Null
     } catch {
         $checksumRejected = $true
+        foreach ($expected in @("does not match", "was not installed", "retry")) {
+            if (-not $_.Exception.Message.Contains($expected)) {
+                throw "Checksum mismatch guidance is missing: $expected"
+            }
+        }
     }
     if (-not $checksumRejected -or (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash -ne $originalHash) {
         throw "Checksum rejection changed the installed executable."

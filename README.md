@@ -41,6 +41,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 
 脚本只支持 Windows x64，会直接下载 Release 的 `prompt-pane.exe` 与 `prompt-pane.exe.sha256`，校验 SHA-256 后原子更新到当前用户目录，再运行 `setup codex`。它不要求管理员权限，不修改 PowerShell Profile、执行策略或系统 `PATH`。在 Release 尚未创建或仓库仍不可公开访问时，这条命令会失败，不应作为当前可用入口宣传。
 
+安装入口适用于能够访问 GitHub Raw 与 GitHub Release、运行 PowerShell 5.1／7，且当前用户可以写入 Prompt Pane 数据目录和 Codex CLI 所在目录的 Windows x64 用户。主程序与摘要下载使用 PowerShell 当前代理和证书配置；受管 Zellij 下载只读取 `HTTP_PROXY`／`HTTPS_PROXY`／`NO_PROXY`。如果网络只配置了 Windows 系统代理，应先为当前 PowerShell 设置 `HTTPS_PROXY`，或预先把准确的 Zellij 0.44.3 放入 `PATH`：
+
+```powershell
+$env:HTTPS_PROXY = "http://proxy.example:8080"
+```
+
+脚本开始执行后会区分主程序、摘要、SHA-256、安装目录、Zellij、Codex 插件和 `codex.pp` 失败，并给出对应处理方向。最前面的 `irm` 如果无法访问 `raw.githubusercontent.com`，脚本尚未开始运行，因此只能由 PowerShell 报告网络错误；此时应先检查 GitHub Raw／代理访问，或使用上面的“先下载、审查，再执行”方式。企业策略禁止脚本执行、GitHub 被阻断、Codex 安装在当前用户不可写目录或存在同名非受管 `codex.pp.exe` 时，安装会明确停止，不会覆盖冲突文件。
+
 当前源码安装方式如下。
 
 克隆仓库并构建：
@@ -187,6 +195,14 @@ Zellij 负责 70/30 窗格，Bubble Tea 负责右侧 TUI。Prompt Pane 只在本
 4. 退出当前工作区并重新运行 `codex.pp`。
 
 ### 安装或启动失败
+
+根据错误中的失败组件处理：
+
+- `Prompt Pane executable`／`Prompt Pane checksum`：确认对应 GitHub Release 和两个资产均存在，并检查当前 PowerShell 的 GitHub、代理和 TLS 访问。
+- `SHA-256`：重新下载同一 Release 的程序与摘要；持续不匹配时停止安装并报告该 Release。
+- `Zellij`：检查 GitHub 访问；代理网络设置 `HTTPS_PROXY`，或预先安装 Zellij 0.44.3 到 `PATH`。
+- `codex.pp target directory is not writable`：使用当前用户可写的 Codex CLI 安装位置；程序不会修改 `PATH` 或请求管理员权限。
+- `already exists and is not managed`：保留现有同名文件并停止，需由用户确认其来源和处理方式。
 
 先运行：
 
