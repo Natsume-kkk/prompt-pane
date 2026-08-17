@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-Prompt Pane 的六套主题色、语义配色和 Codex 状态栏设计基于 Token Tracker：
+Prompt Pane 的六套主题色、语义配色、主题选择器八色色板顺序和 Codex 状态栏设计基于 Token Tracker：
 
 - Project: https://github.com/stormzhang/token-tracker
 - Audited revision: `ab091fc7cdf1ef5874befce2b5b6410dbf095535`

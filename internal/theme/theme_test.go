@@ -55,3 +55,12 @@ func TestSelectableNamesExcludesAuto(t *testing.T) {
 		}
 	}
 }
+
+func TestThemePickerRoleUsesEachPaletteMauve(t *testing.T) {
+	for _, name := range SelectableNames() {
+		palette := Resolve(name, false)
+		if got := Derive(palette).ThemePick; got != palette.Mauve {
+			t.Fatalf("%s theme picker color = %q, want %q", name, got, palette.Mauve)
+		}
+	}
+}

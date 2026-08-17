@@ -119,7 +119,7 @@ codex.pp resume
 
 进入 `/side` 或 `/btw` 时，viewer 正文临时切换为侧聊提示词，状态栏继续保留父对话最后一次有效指标且不接受侧聊指标覆盖。Codex 未提供侧聊退出 Hook 时，关闭侧聊后正文会暂时停留在侧聊最后快照；提交下一条父对话提示词后，viewer 恢复原父提示词、追加新提示词并丢弃侧聊内容。
 
-内置主题为 `mocha`、`latte`、`frappe`、`macchiato`、`nord` 和 `dracula`，色值与语义映射来自 Token Tracker。默认 `auto` 会在可确认浅色背景时使用 `latte`，否则使用 `mocha`，但不会作为多余选项显示在主题列表中。帮助页统一以 `Help` 为标题，依次显示连接排障（仅适用时）、viewer 操作、导航、prompt 操作、主题与语义预览、与当前工作区直接相关的 Zellij 默认操作，最后以精简 `About` 说明版本、技术基础、Token Tracker 视觉来源和支持环境；宽度允许时会用 `current`／`recommended` 区分当前与自动推荐主题，自定义 Zellij 键位可能与默认提示不同。固定页脚使用 `↑`／`↓` 实时预览、`Enter` 保存。帮助正文、未选中主题名称和普通提示词编号使用正常前景色。也可用 `PROMPT_PANE_THEME` 临时覆盖，`NO_COLOR` 会关闭颜色。
+内置主题为 `mocha`、`latte`、`frappe`、`macchiato`、`nord` 和 `dracula`，色值与语义映射来自 Token Tracker。默认 `auto` 会在可确认浅色背景时使用 `latte`，否则使用 `mocha`，但不会作为多余选项显示在主题列表中。帮助页统一以 `Help` 为标题，依次显示连接排障（仅适用时）、viewer 操作、导航、prompt 操作、主题与语义预览、与当前工作区直接相关的 Zellij 默认操作，最后以精简 `About` 说明版本、技术基础、Token Tracker 视觉来源和支持环境；主题列表使用 Token Tracker 同顺序的八个方形色块，只用左侧箭头表示正在预览的主题，不增加当前／推荐文字。自定义 Zellij 键位可能与默认提示不同。固定页脚使用 `↑`／`↓` 实时预览、`Enter` 保存。帮助正文、未选中主题名称和普通提示词编号使用正常前景色。也可用 `PROMPT_PANE_THEME` 临时覆盖，`NO_COLOR` 会关闭颜色。
 
 ## 会话行为
 

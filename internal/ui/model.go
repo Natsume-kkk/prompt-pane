@@ -872,26 +872,12 @@ func (m Model) helpLines() []string {
 			marker = "› "
 		}
 		label := fmt.Sprintf(" %s%-*s", marker, nameWidth, name)
-		if m.width >= 32 {
-			status := ""
-			original := m.themeOriginal
-			if original == theme.Auto {
-				original = theme.Resolve(theme.Auto, m.lightBackground).Name
-			}
-			if name == original {
-				status = "current"
-				if m.themeOriginal == theme.Auto && m.themeSource == config.ThemeDefault {
-					status = "recommended"
-				}
-			}
-			label += fmt.Sprintf("  %-11s", status)
-		}
 		if m.noColor {
 			if index == m.themeIndex {
 				label = lipgloss.NewStyle().Bold(true).Render(label)
 			}
 		} else if index == m.themeIndex {
-			label = m.styleColor(label, m.visualRoles().Accent)
+			label = m.styleColor(label, m.visualRoles().ThemePick)
 		}
 		entries = append(entries, label+m.themeSwatches(name))
 	}
@@ -1001,14 +987,24 @@ func packPreviewLines(items []string, width int) []string {
 
 func (m Model) themeSwatches(name string) string {
 	palette := theme.Resolve(name, m.lightBackground)
-	colors := []string{palette.Green, palette.Yellow, palette.Peach, palette.Red, palette.Sapphire, palette.Mauve}
+	colors := []string{
+		palette.Green, palette.Yellow, palette.Peach, palette.Red,
+		palette.Blue, palette.Sapphire, palette.Mauve, palette.Pink,
+	}
+	separator := ""
+	if m.width >= 30 {
+		separator = " "
+	}
 	if m.noColor {
-		return " ●●●●●●"
+		return "  " + strings.TrimSuffix(strings.Repeat("■"+separator, len(colors)), separator)
 	}
 	var swatches strings.Builder
-	swatches.WriteString(" ")
-	for _, color := range colors {
-		swatches.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render("●"))
+	swatches.WriteString("  ")
+	for index, color := range colors {
+		if index > 0 {
+			swatches.WriteString(separator)
+		}
+		swatches.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render("■"))
 	}
 	return swatches.String()
 }

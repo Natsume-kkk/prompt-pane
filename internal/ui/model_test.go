@@ -455,7 +455,7 @@ func TestHelpPreviewsAndCancelsThemeSelection(t *testing.T) {
 	updated, _ := model.Update(tea.KeyPressMsg{Code: 'h'})
 	model = updated.(Model)
 	help := strings.Join(model.helpLines(), "\n")
-	if !model.showHelp || !strings.Contains(help, "mocha") || !strings.Contains(help, "current") || !strings.Contains(help, "●●●●●●") {
+	if !model.showHelp || !strings.Contains(help, "mocha") || !strings.Contains(help, "■ ■ ■ ■ ■ ■ ■ ■") || strings.Contains(help, "current") || strings.Contains(help, "recommended") {
 		t.Fatalf("help did not embed theme palettes: %q", help)
 	}
 	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyDown})
@@ -476,7 +476,7 @@ func TestHelpResolvesAutoWithoutListingIt(t *testing.T) {
 	updated, _ := model.Update(tea.KeyPressMsg{Code: 'h'})
 	model = updated.(Model)
 	output := strings.Join(model.helpLines(), "\n")
-	if strings.Contains(output, " auto") || model.themeName != theme.Mocha || !strings.Contains(output, "› mocha") || !strings.Contains(output, "recommended") {
+	if strings.Contains(output, " auto") || model.themeName != theme.Mocha || !strings.Contains(output, "› mocha") || strings.Contains(output, "recommended") {
 		t.Fatalf("auto was not resolved to an explicit dark theme: name=%q output=%q", model.themeName, output)
 	}
 }
@@ -531,7 +531,7 @@ func TestHelpThemeColumnsAndSectionColors(t *testing.T) {
 		for _, line := range lines {
 			plain := ansi.Strip(line)
 			nameIndex := strings.Index(plain, name)
-			swatchIndex := strings.Index(plain, "●")
+			swatchIndex := strings.Index(plain, "■")
 			if nameIndex < 0 || swatchIndex < 0 {
 				continue
 			}
@@ -545,6 +545,33 @@ func TestHelpThemeColumnsAndSectionColors(t *testing.T) {
 			}
 			break
 		}
+	}
+}
+
+func TestHelpThemePickerUsesTokenTrackerSquarePalette(t *testing.T) {
+	model := Model{width: 48, height: 20, themeName: theme.Mocha, themeSource: config.ThemeConfig}
+	model.applyTheme(theme.Mocha)
+	updated, _ := model.Update(tea.KeyPressMsg{Code: 'h'})
+	model = updated.(Model)
+	output := strings.Join(model.helpLines(), "\n")
+	palette := theme.Resolve(theme.Mocha, false)
+
+	selected := lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Mauve)).Render(" › mocha    ")
+	if !strings.Contains(output, selected) {
+		t.Fatalf("selected theme did not use the mauve choice color: %q", output)
+	}
+	for _, color := range []string{
+		palette.Green, palette.Yellow, palette.Peach, palette.Red,
+		palette.Blue, palette.Sapphire, palette.Mauve, palette.Pink,
+	} {
+		square := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render("■")
+		if !strings.Contains(output, square) {
+			t.Fatalf("theme palette missed square color %s: %q", color, output)
+		}
+	}
+	plain := ansi.Strip(output)
+	if strings.Contains(plain, "●") || !strings.Contains(plain, "■ ■ ■ ■ ■ ■ ■ ■") || strings.Contains(plain, "recommended") || strings.Contains(plain, "current") {
+		t.Fatalf("theme picker did not use the requested square-only layout: %q", plain)
 	}
 }
 

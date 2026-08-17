@@ -48,6 +48,7 @@ type Roles struct {
 	Token     string
 	Model     string
 	Selection string
+	ThemePick string
 	Cell      string
 }
 
@@ -120,6 +121,6 @@ func Derive(p Palette) Roles {
 		Muted: p.Overlay0, Accent: p.Sapphire, Success: p.Green, Warning: p.Yellow,
 		Error: p.Red, Project: p.Green, Branch: p.Red, Added: p.Green, Deleted: p.Red,
 		Untracked: p.Mauve, Label: p.Pink, Token: p.Peach, Model: p.Blue,
-		Selection: p.Sapphire, Cell: p.Cell,
+		Selection: p.Sapphire, ThemePick: p.Mauve, Cell: p.Cell,
 	}
 }
