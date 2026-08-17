@@ -88,6 +88,10 @@ func Names() []string {
 	return append([]string(nil), names...)
 }
 
+func SelectableNames() []string {
+	return append([]string(nil), names[1:]...)
+}
+
 func Valid(name string) bool {
 	name = strings.ToLower(strings.TrimSpace(name))
 	if name == Auto {

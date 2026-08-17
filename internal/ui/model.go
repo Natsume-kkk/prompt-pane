@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -141,7 +142,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					m.themeMessage = theme.Environment + " is active"
 					return m, nil
 				}
-				name := theme.Names()[m.themeIndex]
+				name := theme.SelectableNames()[m.themeIndex]
 				return m, saveTheme(name)
 			case "pgup":
 				m.scrollHelp(-m.bodyHeight())
@@ -310,8 +311,13 @@ func (m *Model) applyTheme(name string) {
 func (m *Model) beginThemePreview() {
 	m.themeOriginal = m.themeName
 	m.themeMessage = ""
-	for index, name := range theme.Names() {
-		if name == m.themeName {
+	previewName := m.themeName
+	if previewName == theme.Auto {
+		previewName = theme.Resolve(theme.Auto, m.lightBackground).Name
+		m.applyTheme(previewName)
+	}
+	for index, name := range theme.SelectableNames() {
+		if name == previewName {
 			m.themeIndex = index
 			break
 		}
@@ -319,7 +325,7 @@ func (m *Model) beginThemePreview() {
 }
 
 func (m *Model) moveTheme(delta int) {
-	names := theme.Names()
+	names := theme.SelectableNames()
 	m.themeIndex = (m.themeIndex + delta + len(names)) % len(names)
 	m.applyTheme(names[m.themeIndex])
 	m.themeMessage = ""
@@ -619,7 +625,7 @@ func (m Model) bodyHeight() int {
 		if m.height >= 3 {
 			height--
 		}
-	} else if m.snapshot.Metrics != nil {
+	} else {
 		if m.height >= 10 {
 			height -= len(m.renderStatusBlock(4)) + 1
 		} else if m.height >= 6 {
@@ -627,10 +633,6 @@ func (m Model) bodyHeight() int {
 		} else if m.height >= 3 {
 			height--
 		}
-	} else if m.height >= 8 {
-		height -= 2
-	} else if m.height >= 3 {
-		height--
 	}
 	if height < 1 {
 		return 1
@@ -663,10 +665,10 @@ func (m Model) render() string {
 	lines := visible
 	if m.showHelp && m.height >= 3 {
 		lines = append(lines, m.renderFooter(m.height < 8))
-	} else if m.snapshot.Metrics != nil && m.height >= 10 {
+	} else if m.height >= 10 {
 		lines = append(lines, "")
 		lines = append(lines, m.renderStatusBlock(4)...)
-	} else if m.snapshot.Metrics != nil && m.height >= 6 {
+	} else if m.height >= 6 {
 		lines = append(lines, m.renderStatusBlock(3)...)
 	} else if m.height >= 8 {
 		lines = append(lines, "", m.renderFooter(false))
@@ -814,27 +816,30 @@ func (m Model) helpLines() []string {
 		switch strings.TrimSpace(entry) {
 		case "Help", "Troubleshoot", "Shortcuts":
 			entries[index] = m.styleAction(entry)
-		default:
-			entries[index] = m.styleMuted(entry)
 		}
 	}
-	entries = append(entries, "", m.styleAction(" Theme  ↑/↓ preview · Enter save"))
-	for index, name := range theme.Names() {
+	entries = append(entries, "", m.styleAction(" Theme"), " ↑/↓ preview · Enter save")
+	names := theme.SelectableNames()
+	nameWidth := 0
+	for _, name := range names {
+		nameWidth = max(nameWidth, ansi.StringWidth(name))
+	}
+	for index, name := range names {
 		marker := "  "
 		if index == m.themeIndex {
 			marker = "› "
 		}
-		label := fmt.Sprintf(" %s%-9s", marker, name)
+		label := fmt.Sprintf(" %s%-*s", marker, nameWidth, name)
 		if m.noColor {
 			if index == m.themeIndex {
 				label = lipgloss.NewStyle().Bold(true).Render(label)
 			}
-		} else {
+		} else if index == m.themeIndex {
 			label = m.styleColor(label, m.visualRoles().Accent)
 		}
 		entries = append(entries, label+m.themeSwatches(name))
 	}
-	entries = append(entries, "", m.styleAction(" Preview"))
+	entries = append(entries, "", m.styleAction(" Theme preview")+" · "+m.themeName)
 	entries = append(entries, m.themePreviewLines()...)
 	if m.themeSource == config.ThemeEnvironment {
 		entries = append(entries, "", m.styleWarning(" "+theme.Environment+" overrides saved settings"))
@@ -852,7 +857,7 @@ func (m Model) themePreviewLines() []string {
 		m.styleColor("?1", colors.Untracked)
 	items := []string{
 		m.styleColor("[LIVE]", colors.Success),
-		m.styleMuted("1 Other prompt"),
+		"1 Other prompt",
 		m.styleSelected("2 Selected prompt"),
 		m.styleAction("h help"),
 		m.styleColor("Total: 2.4M", colors.Token),
@@ -905,13 +910,17 @@ func helpEntry(key, description string) string {
 }
 
 func (m Model) renderStatusBlock(maxLines int) []string {
-	if m.snapshot.Metrics == nil || maxLines < 1 {
+	if maxLines < 1 {
 		return nil
 	}
 	if maxLines == 1 {
 		return []string{m.renderFooter(true)}
 	}
 	lines := []string{m.renderStatusHeader()}
+	if m.snapshot.Metrics == nil {
+		waiting := " Metrics: waiting for Codex response…"
+		return append(lines, ansi.Truncate(waiting, m.width, ""))
+	}
 	remaining := maxLines - 1
 	rows := m.renderMetricRows(10, true)
 	if !statusRowsFit(rows, remaining, m.width) {
@@ -950,14 +959,21 @@ func (m Model) renderStatusHeader() string {
 	right := ""
 	if m.width >= 40 {
 		right = m.styleAction("h help")
+		if m.snapshot.State == "ready" {
+			right = m.styleAction("h troubleshoot")
+		}
 	}
 	state := m.styleState("[" + stateLabel(m.snapshot.State) + "]")
 	total := ""
-	if metrics.TotalTokens > 0 {
-		total = m.styleColor("Total: "+compactNumber(metrics.TotalTokens), m.visualRoles().Token)
+	if metrics != nil {
+		value := "--"
+		if metrics.TotalTokens > 0 {
+			value = compactNumber(metrics.TotalTokens)
+		}
+		total = m.styleColor("Total: "+value, m.visualRoles().Token)
 	}
 	model := ""
-	if metrics.Model != "" {
+	if metrics != nil && metrics.Model != "" {
 		label := metrics.Model
 		if metrics.Effort != "" {
 			label += " " + metrics.Effort
@@ -1058,9 +1074,13 @@ func (m Model) renderMetricPieces(barWidth int, resetVisible bool) []string {
 	pieces := make([]string, 0, 3)
 	if metrics.FiveHour != nil {
 		pieces = append(pieces, m.renderQuota("5h", metrics.FiveHour, barWidth, resetVisible))
+	} else {
+		pieces = append(pieces, m.styleColor("5h: --", colors.Label))
 	}
 	if metrics.SevenDay != nil {
 		pieces = append(pieces, m.renderQuota("7d", metrics.SevenDay, barWidth, resetVisible))
+	} else {
+		pieces = append(pieces, m.styleColor("7d: --", colors.Label))
 	}
 	if metrics.ContextUsedPercent > 0 {
 		label := "Ctx"
@@ -1068,8 +1088,10 @@ func (m Model) renderMetricPieces(barWidth int, resetVisible bool) []string {
 			label = compactNumber(metrics.ContextWindow) + " Ctx"
 		}
 		pieces = append(pieces, m.styleColor(label+": ", colors.Label)+m.renderPercent(metrics.ContextUsedPercent, barWidth))
+	} else {
+		pieces = append(pieces, m.styleColor("Ctx: --", colors.Label))
 	}
-	if len(pieces) > 0 && (metrics.FiveHour != nil || metrics.SevenDay != nil) {
+	if len(pieces) > 0 {
 		pieces[0] = m.styleColor("Limit: ", colors.Label) + pieces[0]
 	}
 	return pieces
@@ -1256,7 +1278,7 @@ func (m Model) layoutBody() bodyLayout {
 			if lineIndex == summaryLine {
 				line = m.styleMuted(line)
 			}
-			layout.lines = append(layout.lines, m.styleMuted(prefix)+line)
+			layout.lines = append(layout.lines, prefix+line)
 		}
 		layout.prompts = append(layout.prompts, promptRange{start: start, end: len(layout.lines), long: isLong})
 	}
@@ -1358,11 +1380,110 @@ func wrapText(text string, width int) []string {
 		return []string{""}
 	}
 	masked, marker := maskEdgeSpaces(text)
-	wrapped := ansi.Wrap(masked, width, "")
+	wrapped := wrapMixedText(masked, width)
 	if marker != "" {
 		wrapped = strings.ReplaceAll(wrapped, marker, " ")
 	}
 	return strings.Split(wrapped, "\n")
+}
+
+type wrapToken struct {
+	text  string
+	width int
+	space bool
+	word  bool
+}
+
+func wrapMixedText(text string, width int) string {
+	var lines []string
+	for _, sourceLine := range strings.Split(text, "\n") {
+		tokens := mixedWrapTokens(sourceLine)
+		line := ""
+		lineWidth := 0
+		pendingSpace := ""
+		pendingWidth := 0
+		flush := func() {
+			lines = append(lines, line)
+			line = ""
+			lineWidth = 0
+			pendingSpace = ""
+			pendingWidth = 0
+		}
+		for _, token := range tokens {
+			if token.space {
+				pendingSpace += token.text
+				pendingWidth += token.width
+				continue
+			}
+			if line != "" && lineWidth+pendingWidth+token.width > width {
+				flush()
+			}
+			if line == "" && token.width > width {
+				for _, cluster := range graphemeTokens(token.text) {
+					if line != "" && lineWidth+cluster.width > width {
+						flush()
+					}
+					line += cluster.text
+					lineWidth += cluster.width
+				}
+				continue
+			}
+			if lineWidth+pendingWidth+token.width > width {
+				flush()
+			}
+			line += pendingSpace + token.text
+			lineWidth += pendingWidth + token.width
+			pendingSpace = ""
+			pendingWidth = 0
+		}
+		if pendingSpace != "" {
+			for _, cluster := range graphemeTokens(pendingSpace) {
+				if line != "" && lineWidth+cluster.width > width {
+					flush()
+				}
+				line += cluster.text
+				lineWidth += cluster.width
+			}
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func mixedWrapTokens(text string) []wrapToken {
+	clusters := graphemeTokens(text)
+	tokens := make([]wrapToken, 0, len(clusters))
+	for _, cluster := range clusters {
+		r, _ := utf8.DecodeRuneInString(cluster.text)
+		space := unicode.IsSpace(r)
+		breakable := isCJK(r) || r >= utf8.RuneSelf && !unicode.IsLetter(r) && !unicode.IsNumber(r) && !unicode.IsMark(r)
+		if space || breakable {
+			tokens = append(tokens, wrapToken{text: cluster.text, width: cluster.width, space: space})
+			continue
+		}
+		if len(tokens) > 0 && tokens[len(tokens)-1].word {
+			tokens[len(tokens)-1].text += cluster.text
+			tokens[len(tokens)-1].width += cluster.width
+			continue
+		}
+		tokens = append(tokens, wrapToken{text: cluster.text, width: cluster.width, word: true})
+	}
+	return tokens
+}
+
+func graphemeTokens(text string) []wrapToken {
+	tokens := make([]wrapToken, 0, len(text))
+	for text != "" {
+		cluster, width := ansi.FirstGraphemeCluster(text, ansi.GraphemeWidth)
+		tokens = append(tokens, wrapToken{text: cluster, width: width})
+		text = text[len(cluster):]
+	}
+	return tokens
+}
+
+func isCJK(r rune) bool {
+	return unicode.Is(unicode.Han, r) || unicode.Is(unicode.Hiragana, r) ||
+		unicode.Is(unicode.Katakana, r) || unicode.Is(unicode.Hangul, r)
 }
 
 func maskEdgeSpaces(text string) (string, string) {

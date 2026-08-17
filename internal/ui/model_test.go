@@ -119,6 +119,18 @@ func TestWrapTextPrefersWordBoundariesAndSplitsOnlyOversizedWords(t *testing.T) 
 	}
 }
 
+func TestWrapTextFillsLineBeforeMixedCJKText(t *testing.T) {
+	got := wrapText("现在你这个[Image #1]序号也使用弱化色了", 24)
+	if len(got) < 2 || !strings.Contains(got[0], "#1]") {
+		t.Fatalf("mixed text left avoidable space: %#v", got)
+	}
+	for _, line := range got {
+		if ansi.StringWidth(line) > 24 {
+			t.Fatalf("mixed line exceeded width: %q", line)
+		}
+	}
+}
+
 func TestFitLinesTruncatesStyledTextWithoutBreakingANSI(t *testing.T) {
 	styled := lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Render("selected text")
 	got := fitLines([]string{styled}, 5, 1)
@@ -454,6 +466,17 @@ func TestHelpPreviewsAndCancelsThemeSelection(t *testing.T) {
 	}
 }
 
+func TestHelpResolvesAutoWithoutListingIt(t *testing.T) {
+	model := Model{width: 48, height: 20, noColor: true, themeName: theme.Auto, themeSource: config.ThemeDefault}
+	model.applyTheme(theme.Auto)
+	updated, _ := model.Update(tea.KeyPressMsg{Code: 'h'})
+	model = updated.(Model)
+	output := strings.Join(model.helpLines(), "\n")
+	if strings.Contains(output, " auto") || model.themeName != theme.Mocha || !strings.Contains(output, "› mocha") {
+		t.Fatalf("auto was not resolved to an explicit dark theme: name=%q output=%q", model.themeName, output)
+	}
+}
+
 func TestHelpThemeColumnsAndSectionColors(t *testing.T) {
 	model := Model{width: 80, height: 24, themeName: theme.Mocha, themeSource: config.ThemeConfig, snapshot: ipc.Snapshot{State: "live"}}
 	model.applyTheme(theme.Dracula)
@@ -462,16 +485,15 @@ func TestHelpThemeColumnsAndSectionColors(t *testing.T) {
 	lines := model.helpLines()
 
 	accent := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Resolve(theme.Dracula, false).Sapphire))
-	muted := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Resolve(theme.Dracula, false).Overlay0))
-	if !slices.Contains(lines, accent.Render(" Help")) || !slices.Contains(lines, accent.Render(" Theme  ↑/↓ preview · Enter save")) {
+	if !slices.Contains(lines, accent.Render(" Help")) || !slices.Contains(lines, accent.Render(" Theme")) {
 		t.Fatalf("help section titles did not use the theme accent: %q", lines)
 	}
-	if !slices.Contains(lines, muted.Render(helpEntry("Ctrl+X", "Close viewer pane"))) {
-		t.Fatalf("help body did not use the theme muted color: %q", lines)
+	if !slices.Contains(lines, helpEntry("Ctrl+X", "Close viewer pane")) {
+		t.Fatalf("help body did not use the normal foreground: %q", lines)
 	}
 
 	nameColumn, swatchColumn := -1, -1
-	for _, name := range theme.Names() {
+	for _, name := range theme.SelectableNames() {
 		for _, line := range lines {
 			plain := ansi.Strip(line)
 			nameIndex := strings.Index(plain, name)
@@ -502,9 +524,9 @@ func TestHelpSemanticPreviewUsesEveryThemeRole(t *testing.T) {
 			return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(text)
 		}
 		want := []string{
-			styled(roles.Accent, " Preview"),
+			styled(roles.Accent, " Theme preview"),
 			styled(roles.Success, "[LIVE]"),
-			styled(roles.Muted, "1 Other prompt"),
+			"1 Other prompt",
 			styled(roles.Accent, "2 Selected prompt"),
 			styled(roles.Accent, "h help"),
 			styled(roles.Token, "Total: 2.4M"),
@@ -562,6 +584,28 @@ func TestStatusLineUsesThemeRolesAndFitsWidth(t *testing.T) {
 	}
 	if !strings.Contains(output, "\x1b[38;2;255;85;85m") || !strings.Contains(output, "█") || !strings.Contains(output, "░") || strings.Contains(output, "\x1b[48;2;") || strings.Contains(output, "prompt-pane") {
 		t.Fatalf("status lines do not fit or use Dracula danger color: %q", lines)
+	}
+}
+
+func TestStatusWaitsForFirstMetricsUpdate(t *testing.T) {
+	for _, state := range []string{"ready", "live"} {
+		model := Model{width: 48, height: 12, noColor: true, snapshot: ipc.Snapshot{State: state}}
+		output := model.render()
+		if !strings.Contains(output, "Metrics: waiting for Codex response…") {
+			t.Fatalf("state=%s hid pending metrics: %q", state, output)
+		}
+		for _, line := range strings.Split(output, "\n") {
+			if ansi.StringWidth(line) > model.width {
+				t.Fatalf("state=%s pending metrics exceeded width: %q", state, line)
+			}
+		}
+	}
+	model := Model{width: 80, height: 12, noColor: true, snapshot: ipc.Snapshot{State: "live", Metrics: &provider.SessionMetrics{}}}
+	output := strings.Join(model.renderStatusBlock(4), "\n")
+	for _, expected := range []string{"Total: --", "5h: --", "7d: --", "Ctx: --"} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("known metrics update hid unknown field %q: %q", expected, output)
+		}
 	}
 }
 
@@ -638,8 +682,7 @@ func TestEveryThemeColorsStatusIndexSelectionAndHelpAction(t *testing.T) {
 		palette := theme.Resolve(name, false)
 		state := lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Green)).Render("[LIVE]")
 		accent := lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Sapphire))
-		muted := lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Overlay0))
-		if !strings.Contains(output, state) || !strings.Contains(output, muted.Render("  1 ")) || !strings.Contains(output, accent.Render("  2 second")) || !strings.Contains(output, accent.Render("h help ")) {
+		if !strings.Contains(output, state) || !strings.Contains(output, "  1 first") || !strings.Contains(output, accent.Render("  2 second")) || !strings.Contains(output, accent.Render("h help")) {
 			t.Fatalf("theme=%s roles were not shared by state, index, selection and help action: %q", name, output)
 		}
 	}
@@ -1054,9 +1097,8 @@ func TestViewerHasNoBrandHeaderAndFooterOwnsStatus(t *testing.T) {
 	if strings.Contains(output, "Prompt Pane") || !strings.Contains(output, "[LIVE]") || strings.Contains(output, "1 [LIVE]") || !strings.Contains(output, "h help") {
 		t.Fatalf("viewer chrome was not lightweight: %q", output)
 	}
-	lines := strings.Split(output, "\n")
-	if !strings.Contains(lines[len(lines)-1], "[LIVE]") {
-		t.Fatalf("status was not placed in the footer: %q", output)
+	if !strings.Contains(output, "Metrics: waiting for Codex response…") {
+		t.Fatalf("status area did not explain pending metrics: %q", output)
 	}
 }
 

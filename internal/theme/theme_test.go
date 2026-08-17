@@ -42,3 +42,16 @@ func TestNamesAndValidation(t *testing.T) {
 		t.Fatal("unknown theme was accepted")
 	}
 }
+
+func TestSelectableNamesExcludesAuto(t *testing.T) {
+	want := []string{Mocha, Latte, Frappe, Macchiato, Nord, Dracula}
+	got := SelectableNames()
+	if len(got) != len(want) {
+		t.Fatalf("selectable names = %#v", got)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("selectable names = %#v", got)
+		}
+	}
+}
