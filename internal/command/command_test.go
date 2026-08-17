@@ -263,7 +263,7 @@ func TestLaunchRepairNeedsNoConfirmationAndSetupRunsFinalChecks(t *testing.T) {
 func TestSetupCompletionExplainsFirstPromptTrustOnlyOnFirstInstall(t *testing.T) {
 	var firstInstall bytes.Buffer
 	writeSetupCompletion(&firstInstall, true)
-	for _, want := range []string{"Setup complete.", "1. Run `codex.pp`.", "2. Submit your first prompt.", "open `/hooks` in Codex", "restart `codex.pp`"} {
+	for _, want := range []string{"Setup complete.", "1. Run `codex.pp`.", "2. Submit your first prompt.", "open `/hooks` in Codex", "review and trust Prompt Pane", "restart `codex.pp`"} {
 		if !strings.Contains(firstInstall.String(), want) {
 			t.Fatalf("first-install completion is missing %q: %q", want, firstInstall.String())
 		}

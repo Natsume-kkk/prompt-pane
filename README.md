@@ -67,7 +67,7 @@ cd prompt-pane
 
 它不会替换原有的 `codex` 命令，也不会修改 PowerShell Profile 或系统 `PATH`。
 
-首次运行时先提交一条 prompt；如果右侧仍未显示，界面会在约 10 秒后直接提示打开 `/hooks`。在 Codex 中审查 Prompt Pane Hook，然后重新启动：
+首次运行时先提交一条 prompt。`[READY]` 是正常等待状态，不会按等待时长推断 Hook 故障；如果提交后右侧仍未显示，按 `h` 打开 Help，在 Codex 中通过 `/hooks` 审查并信任 Prompt Pane Hook，然后重新启动：
 
 ```powershell
 codex.pp

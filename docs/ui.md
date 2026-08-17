@@ -27,7 +27,7 @@ viewer 的所有页面共享同一套终端网格，不为单个状态临时决�
 - 宽度至少 110 列时用横向双单元格方块显示完整负空间 `PROMPT PANE`；宽度 60～109 列时用单元格方块显示完整名称；宽度不足 60 列时显示负空间 `PP`，无法安全渲染时只显示普通文字进度。
 - 下落中方块使用弱化色，落位过程和最终标识使用统一绿色；成功时整体轻微提亮一次，不闪屏。失败时不补齐标识，已落位部分弱化，状态行优先保留完整 `[FAIL]`；`NO_COLOR` 下使用终端默认色。
 - 阶段编号、总阶段数和百分比只代表本次实际执行的环境检查、缺失组件安装与最终验证；首帧必须使用本次真实总阶段数，已就绪组件不得显示为正在安装，百分比不得倒退。
-- 交互式动画、状态和完成文案共享终端中心轴；首次安装事务结束显示 `Installation ready`／`Running final checks`；显式刷新按逐行进度结束后显示 `Refresh ready`／`Running final checks`，随后逐项输出完整诊断。首次安装全部通过后显示 `Setup complete.`，并依次说明运行 `codex.pp`、提交第一条 prompt，以及未显示时打开 `/hooks` 审查 Prompt Pane；刷新路径只显示可以继续运行 `codex.pp`，不重复首次信任教学。启动前自动修复结束显示 `Repair complete · Starting Codex…`。
+- 交互式动画、状态和完成文案共享终端中心轴；首次安装事务结束显示 `Installation ready`／`Running final checks`；显式刷新按逐行进度结束后显示 `Refresh ready`／`Running final checks`，随后逐项输出完整诊断。首次安装全部通过后显示 `Setup complete.`，并依次说明运行 `codex.pp`、提交第一条 prompt，以及未显示时打开 `/hooks` 审查并信任 Prompt Pane；刷新路径只显示可以继续运行 `codex.pp`，不重复首次信任教学。启动前自动修复结束显示 `Repair complete · Starting Codex…`。
 - 非交互输出、重定向输出和渲染初始化失败必须使用逐行文本进度；动画只是反馈层，不参与安装事务或成功判断。交互动画必须在运行期间消费终端能力查询回复，并在退出前恢复终端状态，不得把 CSI 等协议回复泄漏给 Shell。
 
 ## 标准布局
@@ -67,7 +67,7 @@ viewer 的所有页面共享同一套终端网格，不为单个状态临时决�
 
 ## 状态
 
-- `[READY]`：Codex 与 viewer 已启动，但尚未收到 Codex `SessionStart`，因此 Hook 链路还未被事件确认；Codex 可能要到首条 prompt 才创建逻辑 session，不能据此断定 Hook 未启用或未信任。前 10 秒正文显示 `Waiting for your first prompt`；约 10 秒仍为无 prompt 的 `[READY]` 时，正文主动显示紧凑的 `Open /hooks in Codex`、`Review Prompt Pane` 和 `Restart codex.pp` 三步引导，不要求用户先打开 Help。底栏与其他状态一致显示 `h help`，Help 的 `Connection` 区块保留完整解释。
+- `[READY]`：Codex 与 viewer 已启动，但尚未收到 Codex `SessionStart`，因此 Hook 链路还未被事件确认；Codex 可能要到首条 prompt 才创建逻辑 session，不能据此断定 Hook 未启用或未信任。无论等待多久，正文都显示 `Waiting for your first prompt`，不得自动替换为故障或重启引导。底栏与其他状态一致显示 `h help`；Help 的 `Connection` 区块说明只有用户已经提交 prompt 但右侧仍未显示时，才依次在 Codex 中打开 `/hooks`、审查并信任 Prompt Pane、重新运行 `codex.pp`。
 - `[LIVE]`：已收到 `SessionStart`，提示词链路实时接收正常；尚无 prompt 时显示 `Waiting for your first prompt`。
 - `[ENDED]`：会话已退出，保留最后快照；迟到提示词不得改变快照或恢复为 `[LIVE]`。
 - `[ERROR]`：本次运行不能安全继续。

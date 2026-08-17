@@ -30,7 +30,6 @@ var (
 const (
 	collapsedLineLimit    = 8
 	collapsedVisibleLines = 6
-	readyGuidanceDelay    = 10 * time.Second
 )
 
 type snapshotMsg struct {
@@ -38,7 +37,6 @@ type snapshotMsg struct {
 }
 
 type streamEndedMsg struct{}
-type readyGuidanceMsg struct{}
 
 type themeSavedMsg struct{ name string }
 type themeSaveFailedMsg struct{ err error }
@@ -85,7 +83,6 @@ type Model struct {
 	selecting       bool
 	dragging        bool
 	textSelected    bool
-	readyGuidance   bool
 	selectionStart  textPoint
 	selectionEnd    textPoint
 }
@@ -108,7 +105,6 @@ func New(decoder *json.Decoder) Model {
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		readSnapshot(m.decoder),
-		tea.Tick(readyGuidanceDelay, func(time.Time) tea.Msg { return readyGuidanceMsg{} }),
 		func() tea.Msg { return tea.RequestBackgroundColor() },
 	)
 }
@@ -241,9 +237,6 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		added := len(msg.snapshot.Prompts) - len(m.snapshot.Prompts)
 		wasFollowing := m.following
 		m.snapshot = msg.snapshot
-		if m.snapshot.State != "ready" || len(m.snapshot.Prompts) > 0 {
-			m.readyGuidance = false
-		}
 		if len(m.snapshot.Prompts) == 0 {
 			m.selectedID = ""
 			m.expanded = make(map[string]bool)
@@ -265,10 +258,6 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		readCmd := readSnapshot(m.decoder)
 		return m, readCmd
-	case readyGuidanceMsg:
-		if m.snapshot.State == "ready" && len(m.snapshot.Prompts) == 0 {
-			m.readyGuidance = true
-		}
 	case themeSavedMsg:
 		m.themeName = msg.name
 		m.themeSource = config.ThemeConfig
@@ -801,7 +790,7 @@ func (m Model) helpLines() []string {
 				" Hook confirmation.",
 				" If prompt missing:",
 				" 1. Open /hooks.",
-				" 2. Review plugin.",
+				" 2. Review and trust it.",
 				" 3. Restart codex.pp",
 				"",
 			)
@@ -810,7 +799,7 @@ func (m Model) helpLines() []string {
 				" Hook confirmation starts with the first prompt.",
 				" If a prompt does not appear:",
 				" 1. Open /hooks in Codex.",
-				" 2. Review Prompt Pane.",
+				" 2. Review and trust Prompt Pane.",
 				" 3. Restart codex.pp.",
 				"",
 			)
@@ -1335,9 +1324,6 @@ func (m Model) bodyLines() []string {
 func (m Model) layoutBody() bodyLayout {
 	if len(m.snapshot.Prompts) == 0 {
 		notice := stateNotice(m.snapshot.State)
-		if m.snapshot.State == "ready" && m.readyGuidance {
-			notice = m.readyGuidanceNotice()
-		}
 		if m.snapshot.Notice != "" {
 			notice = m.snapshot.Notice
 		}
@@ -1390,13 +1376,6 @@ func (m Model) layoutBody() bodyLayout {
 		layout.prompts = append(layout.prompts, promptRange{start: start, end: len(layout.lines), long: isLong})
 	}
 	return layout
-}
-
-func (m Model) readyGuidanceNotice() string {
-	if m.width < 32 {
-		return "1 /hooks  2 Review\n3 Restart codex.pp"
-	}
-	return "Prompt hook not confirmed\n1. Open /hooks in Codex.\n2. Review Prompt Pane.\n3. Restart codex.pp."
 }
 
 func foldSummary(hidden, width int, selected bool) string {

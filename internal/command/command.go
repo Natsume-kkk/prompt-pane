@@ -155,7 +155,7 @@ func writeSetupCompletion(out io.Writer, firstInstall bool) {
 	}
 	fmt.Fprintln(out, "1. Run `codex.pp`.")
 	fmt.Fprintln(out, "2. Submit your first prompt.")
-	fmt.Fprintln(out, "3. If it does not appear, open `/hooks` in Codex, review Prompt Pane, then restart `codex.pp`.")
+	fmt.Fprintln(out, "3. If it does not appear, open `/hooks` in Codex, review and trust Prompt Pane, then restart `codex.pp`.")
 }
 
 func (a App) ensureCodexSetup(codexPath, executable string, beforeLaunch bool) (bool, error) {
@@ -351,7 +351,7 @@ func (a App) checkEnvironment(afterSetup bool) int {
 		fmt.Fprintf(a.Out, "[OK]   Zellij %s: %s\n", zellij.Version, path)
 	}
 	if ok {
-		fmt.Fprintln(a.Out, "Environment is ready. Hook trust is not detectable; review it in Codex with `/hooks`.")
+		fmt.Fprintln(a.Out, "Environment is ready. Hook trust is not detectable; review and trust it in Codex with `/hooks` if needed.")
 		return 0
 	}
 	fmt.Fprintln(a.Out, doctorFailureMessage(prerequisitesReady, afterSetup))

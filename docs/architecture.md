@@ -88,7 +88,7 @@ server 必须验证版本、大小、token、`run_id`、事件字段和会话绑
 
 `Stop` Hook 只按本次 payload 的准确 `transcript_path` 逐行筛选 `session_meta`、`turn_context` 和 `token_count`；不提供最近文件回退，不把路径、原始行或内容字段送入 IPC。`transcript_path` 为空或指标解析失败时都按指标不可用静默跳过本次更新并保持 Codex 可用。
 
-Hook 故障不得阻止用户 prompt。非托管 Hook 需要 Codex 信任；程序只能引导用户通过 `/hooks` 审查，禁止绕过信任。
+Hook 故障不得阻止用户 prompt。非托管 Hook 需要 Codex 信任；程序只能引导用户通过 `/hooks` 审查并信任 Hook，禁止绕过信任。
 
 Codex 会对所有会话加载已安装插件。Hook 只有在三个 Prompt Pane 运行环境变量全部存在时才连接 IPC；三者全无时静默以退出码 0 返回，部分缺失则视为配置错误，避免普通 Codex 会话出现无关告警。
 

@@ -10,7 +10,7 @@
 
 1. 首次使用或升级时，用户在 PowerShell 中执行 README 提供的一条安装命令；脚本下载并校验当前 Windows x64 Release，将程序安装到当前用户目录，再调用 `setup codex` 完成组件安装和完整诊断。重跑同一命令执行幂等升级，不要求 Go、Git、管理员权限或修改系统 `PATH`。
 2. 用户运行 `codex.pp`；兼容入口 `prompt-pane codex` 继续可用，Codex 参数保持结构化 argv 原样转发。
-3. 首次安装后，用户按完成提示运行 `codex.pp` 并提交第一条 prompt；如果右侧未显示，再在 Codex 中打开 `/hooks` 审查 Prompt Pane 并重新运行 `codex.pp`。程序不得代替用户信任 Hook，也不得把尚未提交首条 prompt 误判为 Hook 故障。
+3. 首次安装后，用户按完成提示运行 `codex.pp` 并提交第一条 prompt；如果右侧未显示，再在 Codex 中打开 `/hooks` 审查并信任 Prompt Pane，然后重新运行 `codex.pp`。程序不得代替用户信任 Hook，也不得把尚未提交首条 prompt 误判为 Hook 故障。
 4. Prompt Pane 检查 Codex、插件、`codex.pp` 快捷入口和 Zellij；缺失或过期时列出受管组件并自动修复，成功后继续本次 Codex 启动，不要求用户确认或执行第二条修复命令。
 5. Zellij 创建左 70%、右 30% 的工作区，左侧获得焦点；保留窗格边框与鼠标 resize，但本次会话不显示边框悬停高亮和 resize 帮助文字，并将首次点击直通目标窗格，使用户不必先单独聚焦 viewer。
 6. 用户在左侧提交的提示词在 1 秒内显示到右侧。
@@ -81,7 +81,7 @@
 
 模拟 Hook 未信任、IPC 不可用、无效事件、迟到的旧会话事件、Codex 退出、viewer 提前退出和 Zellij 异常；确认 Codex 不被提示词面板故障阻塞，并能恢复 PowerShell。
 
-Hook 尚未信任时，右侧等待约 10 秒后必须提示用户在 Codex 中打开 `/hooks` 审查 Prompt Pane，然后重新运行 `codex.pp`；不得自动写入信任状态或绕过 Codex 的信任检查。
+`[READY]` 只表示 Hook 链路尚未被事件确认；在用户提交首条 prompt 前，右侧必须持续显示正常等待状态，不得按等待时长推断 Hook 故障。用户提交 prompt 后仍未显示时，可通过 Help 引导其在 Codex 中打开 `/hooks` 审查并信任 Prompt Pane，然后重新运行 `codex.pp`；不得自动写入信任状态或绕过 Codex 的信任检查。
 
 ### Windows x64 环境差异
 

@@ -1276,7 +1276,7 @@ func TestReadyStateRoutesTroubleshootingThroughHelp(t *testing.T) {
 
 	updated, _ := model.Update(tea.KeyPressMsg{Code: 'h'})
 	model = updated.(Model)
-	if output := model.render(); !strings.Contains(output, "Help") || !strings.Contains(output, "Connection") || !strings.Contains(output, "Hook confirmation starts with the first prompt") || !strings.Contains(output, "/hooks") || !strings.Contains(output, "Restart codex.pp") {
+	if output := model.render(); !strings.Contains(output, "Help") || !strings.Contains(output, "Connection") || !strings.Contains(output, "Hook confirmation starts with the first prompt") || !strings.Contains(output, "/hooks") || !strings.Contains(output, "Review and trust Prompt Pane") || !strings.Contains(output, "Restart codex.pp") {
 		t.Fatalf("ready help did not explain how to confirm the connection: %q", output)
 	}
 
@@ -1322,25 +1322,18 @@ func TestReadyTroubleshootingIsResponsive(t *testing.T) {
 	}
 }
 
-func TestReadyStateShowsGuidanceAfterDelayAndClearsOnLive(t *testing.T) {
+func TestReadyStateNeverShowsAutomaticDiagnostics(t *testing.T) {
 	for _, size := range [][2]int{{20, 6}, {24, 10}, {32, 12}, {48, 20}, {80, 24}} {
 		model := Model{width: size[0], height: size[1], noColor: true, snapshot: ipc.Snapshot{State: "ready"}}
-		updated, _ := model.Update(readyGuidanceMsg{})
-		model = updated.(Model)
 		output := model.render()
-		if !strings.Contains(output, "/hooks") || !strings.Contains(output, "Restart codex.pp") {
-			t.Fatalf("%dx%d delayed guidance is missing: %q", size[0], size[1], output)
+		normalized := strings.Join(strings.Fields(ansi.Strip(output)), " ")
+		if !strings.Contains(normalized, "Waiting for your first prompt") || strings.Contains(output, "/hooks") || strings.Contains(output, "Restart codex.pp") {
+			t.Fatalf("%dx%d ready state implied a connection failure: %q", size[0], size[1], output)
 		}
 		for _, line := range strings.Split(output, "\n") {
 			if ansi.StringWidth(line) > size[0] {
-				t.Fatalf("%dx%d delayed guidance exceeded width: %q", size[0], size[1], line)
+				t.Fatalf("%dx%d ready state exceeded width: %q", size[0], size[1], line)
 			}
-		}
-
-		updated, _ = model.Update(snapshotMsg{snapshot: ipc.Snapshot{State: "live"}})
-		model = updated.(Model)
-		if output := model.render(); strings.Contains(output, "/hooks") || model.readyGuidance {
-			t.Fatalf("%dx%d live state retained delayed guidance: %q", size[0], size[1], output)
 		}
 	}
 }
