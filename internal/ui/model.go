@@ -647,8 +647,21 @@ func (m Model) render() string {
 		return ""
 	}
 	if m.width < 20 {
-		lines := []string{" Pane too narrow"}
-		for len(lines) < max(1, m.height-1) {
+		padding := ""
+		noticeWidth := m.width
+		if m.width > 1 {
+			padding = " "
+			noticeWidth--
+		}
+		lines := strings.Split(wrapMixedText("Pane too narrow", noticeWidth), "\n")
+		for index := range lines {
+			lines[index] = padding + lines[index]
+		}
+		bodyRows := max(1, m.height-1)
+		if len(lines) > bodyRows {
+			lines = lines[:bodyRows]
+		}
+		for len(lines) < bodyRows {
 			lines = append(lines, "")
 		}
 		if m.height >= 2 {

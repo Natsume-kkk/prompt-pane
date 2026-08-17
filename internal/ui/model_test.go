@@ -1144,13 +1144,17 @@ func TestExtremeNarrowFooterHidesActions(t *testing.T) {
 		for width := 1; width < 20; width++ {
 			model := Model{width: width, height: 6, noColor: noColor, snapshot: ipc.Snapshot{State: "live"}}
 			output := model.render()
+			lines := strings.Split(output, "\n")
 			if strings.Contains(output, "h help") || strings.Contains(output, "latest") {
 				t.Fatalf("color=%v width=%d narrow footer = %q", !noColor, width, output)
 			}
 			if width >= 9 && !strings.Contains(output, "[LIVE]") {
 				t.Fatalf("color=%v width=%d hid live state: %q", !noColor, width, output)
 			}
-			for _, line := range strings.Split(output, "\n") {
+			if width >= 7 && !strings.Contains(lines[len(lines)-1], "[LIVE]") {
+				t.Fatalf("color=%v width=%d did not keep live state in the footer: %q", !noColor, width, output)
+			}
+			for _, line := range lines {
 				if ansi.StringWidth(line) > width {
 					t.Fatalf("width=%d narrow line exceeds width: %q", width, line)
 				}
@@ -1159,6 +1163,38 @@ func TestExtremeNarrowFooterHidesActions(t *testing.T) {
 					t.Fatalf("width=%d narrow line contains a partial escape: %q", width, line)
 				}
 			}
+		}
+	}
+	short := Model{width: 8, height: 3, noColor: true, snapshot: ipc.Snapshot{State: "live"}}
+	shortLines := strings.Split(short.render(), "\n")
+	if shortLines[len(shortLines)-1] != " [LIVE]" {
+		t.Fatalf("short narrow footer = %q, want %q", shortLines[len(shortLines)-1], " [LIVE]")
+	}
+}
+
+func TestExtremeNarrowNoticeWrapsWithoutTruncatingWords(t *testing.T) {
+	tests := []struct {
+		width int
+		lines []string
+	}{
+		{width: 16, lines: []string{" Pane too narrow"}},
+		{width: 15, lines: []string{" Pane too", " narrow"}},
+		{width: 9, lines: []string{" Pane too", " narrow"}},
+		{width: 8, lines: []string{" Pane", " too", " narrow"}},
+	}
+	for _, test := range tests {
+		model := Model{width: test.width, height: 6, noColor: true, snapshot: ipc.Snapshot{State: "live"}}
+		got := strings.Split(model.render(), "\n")
+		if len(got) != model.height {
+			t.Fatalf("width=%d rendered %d lines, want %d: %q", test.width, len(got), model.height, got)
+		}
+		for index, want := range test.lines {
+			if got[index] != want {
+				t.Fatalf("width=%d line %d = %q, want %q", test.width, index, got[index], want)
+			}
+		}
+		if got[len(got)-1] != " [LIVE]" {
+			t.Fatalf("width=%d footer = %q, want %q", test.width, got[len(got)-1], " [LIVE]")
 		}
 	}
 }
