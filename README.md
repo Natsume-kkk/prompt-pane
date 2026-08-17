@@ -125,7 +125,7 @@ codex.pp
    └─ Viewer ◀── authenticated local IPC ◀── Codex Hook
 ```
 
-Zellij 负责 70/30 窗格，Bubble Tea 负责右侧 TUI。Prompt Pane 只在本次 Zellij 会话中关闭边框悬停高亮和 resize 帮助文字，仍保留窗格边框与鼠标 resize，不修改用户全局 Zellij 配置。每次运行都有独立的 `run_id`、本地 endpoint 和一次性 token；Hook 事件必须与本次运行及 Codex `session_id` 精确匹配。
+Zellij 负责 70/30 窗格，Bubble Tea 负责右侧 TUI。Prompt Pane 只在本次 Zellij 会话中关闭边框悬停高亮和 resize 帮助文字，仍保留窗格边框与鼠标 resize；首次聚焦点击会同时传入目标窗格，因此右侧 viewer 无需预先聚焦即可开始拖选。程序不启用鼠标经过即切换焦点，也不修改用户全局 Zellij 配置。每次运行都有独立的 `run_id`、本地 endpoint 和一次性 token；Hook 事件必须与本次运行及 Codex `session_id` 精确匹配。
 
 ## 隐私与安全
 
@@ -133,7 +133,7 @@ Zellij 负责 70/30 窗格，Bubble Tea 负责右侧 TUI。Prompt Pane 只在本
 - `Stop` Hook 只按 Codex 提供的当前会话准确 `transcript_path` 筛选结构化用量元数据；不读取、传输或保存其中的 prompt、回答、推理和工具内容。
 - prompt 只经过 Hook 标准输入、当前用户本地 IPC、进程内存和终端画面。
 - 不把 prompt 写入日志、配置、缓存、遥测或网络请求。
-- 鼠标拖选只复制当前视口中已经安全渲染的文字；程序不会读取剪贴板。
+- 鼠标可直接在未聚焦的 viewer 中开始拖选，只复制当前视口中已经安全渲染的文字；程序不会读取剪贴板。
 - 显示前过滤 ANSI、CSI、OSC 等终端控制序列。
 - 并发运行使用独立 endpoint、token 和会话状态，不共享 prompt。
 

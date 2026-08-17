@@ -61,7 +61,9 @@ func launchArguments(executable string, codexArgs []string) []string {
 	// with a layout. Omitting it makes --layout-string create a new session.
 	return []string{
 		"--layout-string", Layout(executable, codexArgs),
-		"options", "--mouse-hover-effects", "false",
+		"options",
+		"--mouse-hover-effects", "false",
+		"--mouse-click-through", "true",
 	}
 }
 
