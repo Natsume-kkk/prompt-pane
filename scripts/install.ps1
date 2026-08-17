@@ -22,9 +22,15 @@ function Assert-SupportedEnvironment {
         throw "Prompt Pane supports Windows x64 only. Detected architecture: $architecture."
     }
 
-    if ($PSVersionTable.PSVersion.Major -lt 5) {
-        throw "PowerShell 5.1 or PowerShell 7 is required."
+    if (-not (Test-SupportedPowerShellVersion -Version $PSVersionTable.PSVersion)) {
+        throw "PowerShell 5.1 or PowerShell 7 is required. Detected PowerShell $($PSVersionTable.PSVersion)."
     }
+}
+
+function Test-SupportedPowerShellVersion {
+    param([Parameter(Mandatory = $true)][version]$Version)
+
+    return ($Version.Major -eq 5 -and $Version.Minor -ge 1) -or $Version.Major -ge 7
 }
 
 function Resolve-InstallRoot {
@@ -93,6 +99,22 @@ function Read-ExpectedHash {
     return $match.Value.ToUpperInvariant()
 }
 
+function Get-SHA256Hash {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $stream = [IO.File]::OpenRead($Path)
+    try {
+        $sha256 = [Security.Cryptography.SHA256]::Create()
+        try {
+            return ([BitConverter]::ToString($sha256.ComputeHash($stream))).Replace("-", "")
+        } finally {
+            $sha256.Dispose()
+        }
+    } finally {
+        $stream.Dispose()
+    }
+}
+
 function Install-Binary {
     param(
         [Parameter(Mandatory = $true)][string]$Source,
@@ -100,7 +122,7 @@ function Install-Binary {
         [Parameter(Mandatory = $true)][string]$ExpectedHash
     )
 
-    $actualHash = (Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash
+    $actualHash = Get-SHA256Hash -Path $Source
     if ($actualHash -ne $ExpectedHash) {
         throw "The downloaded Prompt Pane executable does not match the Release SHA-256. The file was not installed; retry the download and report the Release if the mismatch persists."
     }
@@ -113,7 +135,7 @@ function Install-Binary {
     }
 
     if (Test-Path -LiteralPath $Destination -PathType Leaf) {
-        $installedHash = (Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash
+        $installedHash = Get-SHA256Hash -Path $Destination
         if ($installedHash -eq $actualHash) {
             Write-Host "[3/4] Prompt Pane is already up to date."
             return $null

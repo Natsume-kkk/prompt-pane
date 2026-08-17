@@ -135,7 +135,7 @@ type Event struct {
 ## 安装边界
 
 - `scripts/install.ps1` 是 GitHub 分发引导层，不复制 Go 安装事务。它在 PowerShell 5.1／7 中解析目标版本，通过 GitHub Release 固定下载地址获取 Windows x64 可执行文件与 SHA-256，先在临时目录校验，再原子更新当前用户 `PromptPane\\bin\\prompt-pane.exe`，最后以绝对路径调用 `setup codex`。脚本不调用 GitHub API、不安装 Codex、不修改 `PATH`、Profile、执行策略或系统配置；失败时不得替换已有可用程序。
-- 引导层的 `Invoke-WebRequest` 使用 PowerShell 当前代理与证书配置。受管 Zellij 继续由 Go `http.DefaultClient` 下载，只读取 `HTTP_PROXY`／`HTTPS_PROXY`／`NO_PROXY`，不把 Windows 系统代理自动转换为环境变量；`PATH` 中已有准确版本 Zellij 时跳过该下载。两条链路的错误都必须保留组件和阶段语义：主程序与摘要下载指出 Release 资产和 GitHub／代理检查方向，Zellij 请求错误指出 GitHub 可达性及 `HTTPS_PROXY` 或预安装准确版本的处理方向，HTTP 非 200、摘要不匹配、大小超限、写入和替换失败继续使用各自精确错误。
+- 引导层的 `Invoke-WebRequest` 使用 PowerShell 当前代理与证书配置，SHA-256 校验直接使用 .NET 加密 API，避免 PowerShell 7 启动 Windows PowerShell 5.1 时继承不兼容模块路径。受管 Zellij 继续由 Go `http.DefaultClient` 下载，只读取 `HTTP_PROXY`／`HTTPS_PROXY`／`NO_PROXY`，不把 Windows 系统代理自动转换为环境变量；`PATH` 中已有准确版本 Zellij 时跳过该下载。两条链路的错误都必须保留组件和阶段语义：主程序与摘要下载指出 Release 资产和 GitHub／代理检查方向，Zellij 请求错误指出 GitHub 可达性及 `HTTPS_PROXY` 或预安装准确版本的处理方向，HTTP 非 200、摘要不匹配、大小超限、写入和替换失败继续使用各自精确错误。
 - 默认安装根目录与 `PROMPT_PANE_HOME` 使用同一解析规则；脚本支持显式版本用于复现和诊断，但不负责回滚已经安装的版本。安装脚本只处理 Prompt Pane 主程序，Codex 插件、`codex.pp` 和 Zellij 仍由 Go 内部安装事务拥有和验证。
 - 公开用例在开始安装或启动工作区前校验 `windows/amd64`；`setup codex` 与 `doctor` 还要发现一个可运行的 PowerShell 5.1 或 7。Hook 的 `commandWindows` 只使用两者共有的调用运算符、环境变量和原生退出码语法。
 - Codex 继续通过 `exec.LookPath` 发现，所有路径通过 `filepath` 和结构化 argv 传递，不假定盘符、用户名、npm 包管理器或无空格路径。任何下载和持久安装之前，对 Prompt Pane 数据目录、Codex 配置目录及 `codex.pp` 目标目录执行临时文件写入探测并立即清理。

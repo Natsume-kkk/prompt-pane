@@ -14,9 +14,9 @@ Prompt Pane 在同一个终端工作区中并排运行 Codex CLI 与本次运行
 | Shell | Windows PowerShell 5.1 或 PowerShell 7 |
 | AI CLI | Codex CLI |
 | 工作区 | Zellij 0.44.3 |
-| 源码构建 | Go 1.26 或更高版本 |
+| 源码构建 | Go 1.26.6 或更高版本 |
 
-当前验证基线为 Go 1.26.5、Codex CLI 0.147.0 和 Zellij 0.44.3。终端只需能够正常运行受支持的 Zellij，不限定品牌。
+当前验证基线为 Go 1.26.6、Codex CLI 0.147.0 和 Zellij 0.44.3。终端只需能够正常运行受支持的 Zellij，不限定品牌。
 
 ## 快速开始
 
@@ -243,4 +243,4 @@ go test -race ./...
 
 Prompt Pane 使用 [Apache License 2.0](LICENSE)。
 
-主题色和状态栏设计包含来自 Token Tracker 的 MIT 许可内容，详见 [第三方声明](THIRD_PARTY_NOTICES.md)。
+可执行文件的第三方 Go 模块，以及主题色和状态栏设计使用的 MIT／BSD 许可内容，详见 [第三方声明](THIRD_PARTY_NOTICES.md)。

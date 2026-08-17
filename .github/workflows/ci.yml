@@ -67,6 +67,13 @@ jobs:
       - name: Test installer with PowerShell 7
         run: .\scripts\test-install.ps1
 
+      - name: Test README fallback from PowerShell 7 to 5.1
+        run: |
+          powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\test-install.ps1
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
       - name: Build release artifact
         run: .\scripts\build.cmd
 

@@ -31,6 +31,17 @@ if (-not $temporaryRoot.StartsWith($systemTemporaryRoot, [StringComparison]::Ord
 try {
     New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
 
+    foreach ($version in @("5.1", "7.0", "7.6")) {
+        if (-not (Test-SupportedPowerShellVersion -Version ([version]$version))) {
+            throw "Supported PowerShell version was rejected: $version"
+        }
+    }
+    foreach ($version in @("5.0", "6.2")) {
+        if (Test-SupportedPowerShellVersion -Version ([version]$version)) {
+            throw "Unsupported PowerShell version was accepted: $version"
+        }
+    }
+
     $downloadFailure = Format-DownloadFailure `
         -Artifact "Prompt Pane checksum" `
         -Uri "https://github.com/example/releases/download/v1.1.0/prompt-pane.exe.sha256" `
@@ -84,20 +95,20 @@ try {
     $destination = Join-Path $temporaryRoot "$unicodeUser path\prompt-pane.exe"
 
     [IO.File]::WriteAllBytes($source, [byte[]](1, 2, 3, 4))
-    $originalHash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
+    $originalHash = Get-SHA256Hash -Path $source
     $firstInstall = Install-Binary -Source $source -Destination $destination -ExpectedHash $originalHash
     if ($null -eq $firstInstall -or $firstInstall -ne "") {
         throw "First-install rollback marker is invalid."
     }
 
     [IO.File]::WriteAllBytes($source, [byte[]](5, 6, 7))
-    $replacementHash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
+    $replacementHash = Get-SHA256Hash -Path $source
     $backup = Install-Binary -Source $source -Destination $destination -ExpectedHash $replacementHash
     if (-not $backup -or -not (Test-Path -LiteralPath $backup -PathType Leaf)) {
         throw "Replacement did not create a rollback copy."
     }
     Restore-PreviousBinary -Destination $destination -Backup $backup
-    if ((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash -ne $originalHash) {
+    if ((Get-SHA256Hash -Path $destination) -ne $originalHash) {
         throw "Rollback did not restore the previous executable."
     }
 
@@ -112,7 +123,7 @@ try {
             }
         }
     }
-    if (-not $checksumRejected -or (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash -ne $originalHash) {
+    if (-not $checksumRejected -or (Get-SHA256Hash -Path $destination) -ne $originalHash) {
         throw "Checksum rejection changed the installed executable."
     }
 

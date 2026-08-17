@@ -1,6 +1,6 @@
 module github.com/Natsume-kkk/prompt-pane
 
-go 1.26.0
+go 1.26.6
 
 require (
 	charm.land/bubbletea/v2 v2.0.8
