@@ -20,10 +20,11 @@ import (
 	"github.com/Natsume-kkk/prompt-pane/internal/setupui"
 	"github.com/Natsume-kkk/prompt-pane/internal/shortcut"
 	"github.com/Natsume-kkk/prompt-pane/internal/ui"
+	appversion "github.com/Natsume-kkk/prompt-pane/internal/version"
 	"github.com/Natsume-kkk/prompt-pane/internal/zellij"
 )
 
-const Version = "1.1.0"
+const Version = appversion.Current
 
 const (
 	hookRunEnvironmentExitCode = 10
