@@ -271,7 +271,7 @@ func TestHelpOwnsShortcutsAndViewerRequiresCtrlXToQuit(t *testing.T) {
 	}
 	updated, _ := model.Update(tea.KeyPressMsg{Code: 'h'})
 	model = updated.(Model)
-	if !model.showHelp || !strings.Contains(model.render(), "Ctrl+X     Close viewer pane") || !strings.Contains(model.render(), "Enter      Expand or fold") || strings.Contains(model.render(), "DblClick") || !strings.Contains(model.render(), "Esc close") {
+	if !model.showHelp || !strings.Contains(model.render(), "Ctrl+X     Close viewer pane") || !strings.Contains(model.render(), "Enter      Expand or fold") || strings.Contains(model.render(), "DblClick") || !strings.Contains(model.render(), "Esc cancel") {
 		t.Fatalf("help did not expose viewer shortcuts: %q", model.render())
 	}
 	if model.selectedID != "one" || model.offset != 1 || model.following {
@@ -307,6 +307,30 @@ func TestViewerErrorsNeverRequestPaneClosure(t *testing.T) {
 	model = updated.(Model)
 	if cmd != nil || model.snapshot.State != "error" || model.CloseRequested() {
 		t.Fatalf("stream failure closed the pane or missed the error state: %#v", model)
+	}
+}
+
+func TestHelpFooterExplainsThemeSelectionAndSavingAtResponsiveWidths(t *testing.T) {
+	for _, test := range []struct {
+		width int
+		want  string
+	}{
+		{width: 80, want: "↑/↓ select theme · Enter save · Esc cancel"},
+		{width: 48, want: "↑/↓ theme · Enter save · Esc cancel"},
+		{width: 32, want: "↑/↓ · Enter save"},
+		{width: 24, want: "↑/↓ Enter"},
+		{width: 20, want: "↑/↓ Enter"},
+	} {
+		model := Model{width: test.width, height: 20, noColor: true, showHelp: true, snapshot: ipc.Snapshot{State: "ready"}}
+		for _, compactHeight := range []bool{false, true} {
+			footer := model.renderFooter(compactHeight)
+			if !strings.Contains(footer, test.want) {
+				t.Fatalf("width=%d compact=%t help footer did not explain theme controls: %q", test.width, compactHeight, footer)
+			}
+			if ansi.StringWidth(footer) > test.width {
+				t.Fatalf("width=%d compact=%t help footer exceeded width: %q", test.width, compactHeight, footer)
+			}
+		}
 	}
 }
 

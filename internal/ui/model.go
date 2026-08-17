@@ -741,9 +741,15 @@ func (m Model) renderFooter(compactHeight bool) string {
 
 	actions := "h help"
 	if m.showHelp {
-		actions = "↑↓ theme · Enter save · Esc close"
-		if compactHeight || m.width < 44 {
-			actions = "↑↓ · Enter · Esc"
+		actions = "↑/↓ select theme · Enter save · Esc cancel"
+		if m.width < 52 {
+			actions = "↑/↓ theme · Enter save · Esc cancel"
+		}
+		if m.width < 45 {
+			actions = "↑/↓ · Enter save"
+		}
+		if m.width < 26 {
+			actions = "↑/↓ Enter"
 		}
 	} else if m.snapshot.Metrics != nil && m.height < 6 {
 		actions = m.compactMetrics()
