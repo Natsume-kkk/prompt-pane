@@ -1329,6 +1329,38 @@ func TestReadyStateRoutesTroubleshootingThroughHelp(t *testing.T) {
 	}
 }
 
+func TestReadyHelpSeparatesExplanationFromTroubleshootingSteps(t *testing.T) {
+	for _, test := range []struct {
+		width       int
+		explanation string
+		firstStep   string
+	}{
+		{width: 20, explanation: "   If missing:", firstStep: "   1. Open /hooks."},
+		{width: 48, explanation: "   If prompt missing:", firstStep: "   1. Open /hooks."},
+		{width: 80, explanation: "   If a prompt does not appear:", firstStep: "   1. Open /hooks in Codex."},
+	} {
+		model := Model{width: test.width, noColor: true, snapshot: ipc.Snapshot{State: "ready"}}
+		lines := model.helpLines()
+		if len(lines) < 4 || ansi.Strip(lines[2]) != " Connection" || lines[3] == "" {
+			t.Fatalf("width=%d connection heading retained a blank line: %q", test.width, lines)
+		}
+		foundExplanation := false
+		for index, line := range lines {
+			if ansi.Strip(line) != test.explanation {
+				continue
+			}
+			foundExplanation = true
+			if index+2 >= len(lines) || lines[index+1] != "" || ansi.Strip(lines[index+2]) != test.firstStep {
+				t.Fatalf("width=%d troubleshooting explanation and steps were not separated: %q", test.width, lines)
+			}
+			break
+		}
+		if !foundExplanation {
+			t.Fatalf("width=%d troubleshooting explanation was missing: %q", test.width, lines)
+		}
+	}
+}
+
 func TestReadyTroubleshootingIsResponsive(t *testing.T) {
 	for _, size := range [][2]int{{20, 6}, {24, 10}, {32, 12}, {48, 20}, {80, 24}} {
 		model := Model{width: size[0], height: size[1], noColor: true, snapshot: ipc.Snapshot{State: "ready"}}

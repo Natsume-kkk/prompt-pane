@@ -783,12 +783,13 @@ func (m Model) compactMetrics() string {
 func (m Model) helpLines() []string {
 	entries := []string{" Help", ""}
 	if m.snapshot.State == "ready" {
-		entries = append(entries, " Connection", "")
+		entries = append(entries, " Connection")
 		if m.width < 32 {
 			entries = append(entries,
 				"   Hook confirms on",
 				"   first prompt.",
 				"   If missing:",
+				"",
 				"   1. Open /hooks.",
 				"   2. Review/trust.",
 				"   3. Restart",
@@ -800,6 +801,7 @@ func (m Model) helpLines() []string {
 				"   First prompt starts",
 				"   Hook confirmation.",
 				"   If prompt missing:",
+				"",
 				"   1. Open /hooks.",
 				"   2. Review and trust it.",
 				"   3. Restart codex.pp",
@@ -809,6 +811,7 @@ func (m Model) helpLines() []string {
 			entries = append(entries,
 				"   Hook confirmation starts with the first prompt.",
 				"   If a prompt does not appear:",
+				"",
 				"   1. Open /hooks in Codex.",
 				"   2. Review and trust Prompt Pane.",
 				"   3. Restart codex.pp.",
