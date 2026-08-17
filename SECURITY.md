@@ -2,7 +2,7 @@
 
 ## 支持范围
 
-当前维护范围为 `v1.1.0` 的 Windows x64、PowerShell、Zellij 和 Codex CLI 组合。目前尚未提供公开预编译安装包；其他平台和 AI provider 不在支持范围内。
+当前维护范围为 `v1.1.0` 的 Windows x64、PowerShell、Zellij 和 Codex CLI 组合。官方预编译文件只通过本仓库的 GitHub Releases 提供；其他平台和 AI provider 不在支持范围内。
 
 ## 报告问题
 
