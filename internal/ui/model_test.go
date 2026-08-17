@@ -306,12 +306,19 @@ func TestCompactHelpScrollsWithoutChangingPromptReadingState(t *testing.T) {
 			t.Fatalf("%dx%d help unexpectedly fit without scrolling", size[0], size[1])
 		}
 
-		for range 10 {
+		sawTheme, sawPreview := false, false
+		for range 20 {
+			output := model.render()
+			sawTheme = sawTheme || strings.Contains(output, "dracula")
+			sawPreview = sawPreview || strings.Contains(output, "[ERROR]")
+			if model.helpOffset == model.helpMaxOffset() {
+				break
+			}
 			updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
 			model = updated.(Model)
 		}
-		if model.helpOffset == 0 || !strings.Contains(model.render(), "dracula") {
-			t.Fatalf("%dx%d help did not reach the embedded theme palettes: %q", size[0], size[1], model.render())
+		if model.helpOffset == 0 || !sawTheme || !sawPreview {
+			t.Fatalf("%dx%d help did not reach themes and semantic preview: %q", size[0], size[1], model.render())
 		}
 		previousOffset := model.helpOffset
 		updated, _ = model.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
@@ -324,7 +331,7 @@ func TestCompactHelpScrollsWithoutChangingPromptReadingState(t *testing.T) {
 		}
 		updated, _ = model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 		model = updated.(Model)
-		if model.helpOffset != 0 {
+		if model.helpOffset != model.helpMaxOffset() {
 			t.Fatalf("%dx%d help offset was not clamped after resize: %#v", size[0], size[1], model)
 		}
 
@@ -485,6 +492,40 @@ func TestHelpThemeColumnsAndSectionColors(t *testing.T) {
 	}
 }
 
+func TestHelpSemanticPreviewUsesEveryThemeRole(t *testing.T) {
+	for _, name := range theme.Names()[1:] {
+		model := Model{width: 80, height: 24, themeName: name, themeSource: config.ThemeConfig, snapshot: ipc.Snapshot{State: "live"}}
+		model.applyTheme(name)
+		output := strings.Join(model.helpLines(), "\n")
+		roles := theme.Derive(theme.Resolve(name, false))
+		styled := func(color, text string) string {
+			return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(text)
+		}
+		want := []string{
+			styled(roles.Accent, " Preview"),
+			styled(roles.Success, "[LIVE]"),
+			styled(roles.Muted, "1 Other prompt"),
+			styled(roles.Accent, "2 Selected prompt"),
+			styled(roles.Accent, "h help"),
+			styled(roles.Token, "Total: 2.4M"),
+			styled(roles.Model, "Model: gpt-5.6"),
+			styled(roles.Label, "Limit:"),
+			styled(roles.Warning, "66%"),
+			styled(roles.Branch, "main"),
+			styled(roles.Added, "+12"),
+			styled(roles.Deleted, "-3"),
+			styled(roles.Untracked, "?1"),
+			styled(roles.Muted, "Muted text"),
+			styled(roles.Error, "[ERROR]"),
+		}
+		for _, expected := range want {
+			if !strings.Contains(output, expected) {
+				t.Fatalf("theme=%s preview missed semantic sample %q: %q", name, ansi.Strip(expected), output)
+			}
+		}
+	}
+}
+
 func TestHelpSavesThemeSelection(t *testing.T) {
 	t.Setenv(paths.EnvHome, t.TempDir())
 	model := Model{width: 48, height: 20, noColor: true, themeName: theme.Mocha, themeSource: config.ThemeConfig}
@@ -597,7 +638,8 @@ func TestEveryThemeColorsStatusIndexSelectionAndHelpAction(t *testing.T) {
 		palette := theme.Resolve(name, false)
 		state := lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Green)).Render("[LIVE]")
 		accent := lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Sapphire))
-		if !strings.Contains(output, state) || !strings.Contains(output, accent.Render("  1 ")) || !strings.Contains(output, accent.Render("  2 second")) || !strings.Contains(output, accent.Render("h help ")) {
+		muted := lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Overlay0))
+		if !strings.Contains(output, state) || !strings.Contains(output, muted.Render("  1 ")) || !strings.Contains(output, accent.Render("  2 second")) || !strings.Contains(output, accent.Render("h help ")) {
 			t.Fatalf("theme=%s roles were not shared by state, index, selection and help action: %q", name, output)
 		}
 	}

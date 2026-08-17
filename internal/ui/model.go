@@ -834,12 +834,56 @@ func (m Model) helpLines() []string {
 		}
 		entries = append(entries, label+m.themeSwatches(name))
 	}
+	entries = append(entries, "", m.styleAction(" Preview"))
+	entries = append(entries, m.themePreviewLines()...)
 	if m.themeSource == config.ThemeEnvironment {
 		entries = append(entries, "", m.styleWarning(" "+theme.Environment+" overrides saved settings"))
 	} else if m.themeMessage != "" {
 		entries = append(entries, "", m.styleWarning(" "+m.themeMessage))
 	}
 	return entries
+}
+
+func (m Model) themePreviewLines() []string {
+	colors := m.visualRoles()
+	git := m.styleColor("main", colors.Branch) + " " +
+		m.styleColor("+12", colors.Added) + " " +
+		m.styleColor("-3", colors.Deleted) + " " +
+		m.styleColor("?1", colors.Untracked)
+	items := []string{
+		m.styleColor("[LIVE]", colors.Success),
+		m.styleMuted("1 Other prompt"),
+		m.styleSelected("2 Selected prompt"),
+		m.styleAction("h help"),
+		m.styleColor("Total: 2.4M", colors.Token),
+		m.styleColor("Model: gpt-5.6", colors.Model),
+		m.styleColor("Limit:", colors.Label) + " " + m.styleColor("66%", colors.Warning),
+		git,
+		m.styleMuted("Muted text"),
+		m.styleColor("[ERROR]", colors.Error),
+	}
+	return packPreviewLines(items, max(1, m.width-1))
+}
+
+func packPreviewLines(items []string, width int) []string {
+	lines := make([]string, 0, len(items))
+	current := ""
+	for _, item := range items {
+		candidate := item
+		if current != "" {
+			candidate = current + "  " + item
+		}
+		if current != "" && ansi.StringWidth(candidate) > width {
+			lines = append(lines, " "+current)
+			current = item
+			continue
+		}
+		current = candidate
+	}
+	if current != "" {
+		lines = append(lines, " "+current)
+	}
+	return lines
 }
 
 func (m Model) themeSwatches(name string) string {
@@ -1212,7 +1256,7 @@ func (m Model) layoutBody() bodyLayout {
 			if lineIndex == summaryLine {
 				line = m.styleMuted(line)
 			}
-			layout.lines = append(layout.lines, m.styleAction(prefix)+line)
+			layout.lines = append(layout.lines, m.styleMuted(prefix)+line)
 		}
 		layout.prompts = append(layout.prompts, promptRange{start: start, end: len(layout.lines), long: isLong})
 	}
