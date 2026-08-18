@@ -127,17 +127,16 @@ func (s *Server) authenticated(request Request) bool {
 
 func (s *Server) apply(event provider.Event) bool {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	switch event.Kind {
 	case provider.SessionStarted:
 		if strings.TrimSpace(event.SessionID) == "" {
-			s.mu.Unlock()
 			return false
 		}
 		switch event.Source {
 		case provider.SessionSourceStartup, provider.SessionSourceResume, provider.SessionSourceClear, provider.SessionSourceCompact:
 		default:
-			s.mu.Unlock()
 			return false
 		}
 		sessionChanged := s.sessionID != "" && s.sessionID != event.SessionID
@@ -167,21 +166,12 @@ func (s *Server) apply(event provider.Event) bool {
 		delete(s.stale, event.SessionID)
 		switch event.Source {
 		case provider.SessionSourceResume:
-			s.prompts = nil
-			s.metrics = nil
-			s.seen = make(map[string]struct{})
-			s.notice = "Session resumed. Showing new prompts only."
+			s.resetSessionLocked("Session resumed. Showing new prompts only.")
 		case provider.SessionSourceClear:
-			s.prompts = nil
-			s.metrics = nil
-			s.seen = make(map[string]struct{})
-			s.notice = "Session cleared. Showing new prompts only."
+			s.resetSessionLocked("Session cleared. Showing new prompts only.")
 		case provider.SessionSourceStartup:
 			if sessionChanged {
-				s.prompts = nil
-				s.metrics = nil
-				s.seen = make(map[string]struct{})
-				s.notice = "New session started. Showing new prompts only."
+				s.resetSessionLocked("New session started. Showing new prompts only.")
 			} else {
 				s.notice = ""
 			}
@@ -190,28 +180,20 @@ func (s *Server) apply(event provider.Event) bool {
 		s.state = "live"
 	case provider.PromptSubmitted:
 		if event.Prompt == nil || s.sessionID == "" {
-			s.mu.Unlock()
 			return false
 		}
 		if event.SessionID != s.sessionID {
 			if s.parent != nil && event.SessionID == s.parent.sessionID {
-				overlayID := s.sessionID
-				s.restoreSessionLocked(*s.parent)
-				s.parent = nil
-				s.stale[overlayID] = struct{}{}
-				delete(s.stale, event.SessionID)
+				s.restoreParentLocked()
 			} else {
 				_, stale := s.stale[event.SessionID]
-				s.mu.Unlock()
 				return stale
 			}
 		}
 		if s.state == "ended" {
-			s.mu.Unlock()
 			return true
 		}
 		if _, exists := s.seen[event.Prompt.ID]; exists {
-			s.mu.Unlock()
 			return true
 		}
 		s.seen[event.Prompt.ID] = struct{}{}
@@ -221,42 +203,47 @@ func (s *Server) apply(event provider.Event) bool {
 	case provider.MetricsUpdated:
 		if event.Metrics == nil || s.sessionID == "" || event.SessionID != s.sessionID {
 			_, stale := s.stale[event.SessionID]
-			s.mu.Unlock()
 			return event.Metrics != nil && stale
 		}
 		if s.state == "ended" {
-			s.mu.Unlock()
 			return true
 		}
 		if s.parent != nil {
-			s.mu.Unlock()
 			return true
 		}
-		copy := *event.Metrics
-		s.metrics = &copy
+		s.metrics = cloneMetrics(event.Metrics)
 	case provider.SessionEnded:
 		if event.SessionID != s.sessionID {
 			_, stale := s.stale[event.SessionID]
-			s.mu.Unlock()
 			return stale
 		}
 		if s.parent != nil {
-			overlayID := s.sessionID
-			s.restoreSessionLocked(*s.parent)
-			s.parent = nil
-			s.stale[overlayID] = struct{}{}
-			delete(s.stale, s.sessionID)
+			s.restoreParentLocked()
 			break
 		}
 		s.state = "ended"
 		s.notice = ""
 	default:
-		s.mu.Unlock()
 		return false
 	}
 	s.broadcastLocked()
-	s.mu.Unlock()
 	return true
+}
+
+func (s *Server) resetSessionLocked(notice string) {
+	s.prompts = nil
+	s.metrics = nil
+	s.seen = make(map[string]struct{})
+	s.notice = notice
+}
+
+func (s *Server) restoreParentLocked() {
+	overlayID := s.sessionID
+	parentID := s.parent.sessionID
+	s.restoreSessionLocked(*s.parent)
+	s.parent = nil
+	s.stale[overlayID] = struct{}{}
+	delete(s.stale, parentID)
 }
 
 func (s *Server) captureSessionLocked() sessionView {
