@@ -322,14 +322,12 @@ func TestHelpFooterExplainsThemeSelectionAndSavingAtResponsiveWidths(t *testing.
 		{width: 20, want: "↑/↓ Enter"},
 	} {
 		model := Model{width: test.width, height: 20, noColor: true, showHelp: true, snapshot: ipc.Snapshot{State: "ready"}}
-		for _, compactHeight := range []bool{false, true} {
-			footer := model.renderFooter(compactHeight)
-			if !strings.Contains(footer, test.want) {
-				t.Fatalf("width=%d compact=%t help footer did not explain theme controls: %q", test.width, compactHeight, footer)
-			}
-			if ansi.StringWidth(footer) > test.width {
-				t.Fatalf("width=%d compact=%t help footer exceeded width: %q", test.width, compactHeight, footer)
-			}
+		footer := model.renderFooter()
+		if !strings.Contains(footer, test.want) {
+			t.Fatalf("width=%d help footer did not explain theme controls: %q", test.width, footer)
+		}
+		if ansi.StringWidth(footer) > test.width {
+			t.Fatalf("width=%d help footer exceeded width: %q", test.width, footer)
 		}
 	}
 }
@@ -417,14 +415,14 @@ func TestMouseClickSelectsVisiblePromptWithoutJumpingViewport(t *testing.T) {
 
 func TestMouseClickLatestRestoresFollowingAndIgnoresFooter(t *testing.T) {
 	model := Model{
-		width: 40, height: 10, noColor: true, selectedID: "one", newCount: 2,
+		width: 40, height: 10, noColor: true, selectedID: "one",
 		snapshot: ipc.Snapshot{State: "live", Prompts: []provider.UserPrompt{
 			{ID: "one", Text: "first"}, {ID: "two", Text: "second"},
 		}},
 	}
 	latest := model.layoutBody().prompts[1].start - model.offset
 	model = leftClick(model, 4, latest)
-	if model.selectedID != "two" || !model.following || model.newCount != 0 || model.offset != model.maxOffset() {
+	if model.selectedID != "two" || !model.following || model.offset != model.maxOffset() {
 		t.Fatalf("latest click did not restore following: %#v", model)
 	}
 
@@ -654,6 +652,7 @@ func TestHelpSemanticPreviewUsesEveryThemeRole(t *testing.T) {
 			styled(roles.Success, "[LIVE]"),
 			"1 Other prompt",
 			styled(roles.Accent, "2 Selected prompt"),
+			styled(roles.Accent, "↓ 3 prompts below"),
 			styled(roles.Accent, "h help"),
 			styled(roles.Token, "Total: 2.4M"),
 			styled(roles.Model, "Model: gpt-5.6"),
@@ -731,10 +730,13 @@ func TestStatusWaitsForFirstMetricsUpdate(t *testing.T) {
 	}
 	model := Model{width: 80, height: 12, noColor: true, snapshot: ipc.Snapshot{State: "live", Metrics: &provider.SessionMetrics{}}}
 	output := strings.Join(model.renderStatusBlock(4), "\n")
-	for _, expected := range []string{"Total: --", "5h: --", "7d: --", "Ctx: --"} {
+	for _, expected := range []string{"Total: --", "Ctx: --"} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("known metrics update hid unknown field %q: %q", expected, output)
 		}
+	}
+	if strings.Contains(output, "Limit:") || strings.Contains(output, "5h:") || strings.Contains(output, "7d:") {
+		t.Fatalf("known metrics update displayed unavailable quota windows: %q", output)
 	}
 }
 
@@ -810,11 +812,8 @@ func TestStatusUsesOneCompactMetricRow(t *testing.T) {
 				t.Fatalf("width=%d status line overflowed: %q", width, line)
 			}
 		}
-		if !strings.Contains(output, "5h: --") || !strings.Contains(output, "7d:") || strings.Contains(output, "258k Ctx:") {
+		if strings.Contains(output, "5h:") || !strings.Contains(output, "7d:") || strings.Contains(output, "258k Ctx:") {
 			t.Fatalf("width=%d status lost quota semantics: %q", width, output)
-		}
-		if strings.Contains(output, "5h: -- | 7d:") {
-			t.Fatalf("width=%d split the limit group with a divider: %q", width, output)
 		}
 		if !strings.Contains(output, "█") || !strings.Contains(output, "░") {
 			t.Fatalf("width=%d status lost progress bars: %q", width, output)
@@ -826,14 +825,20 @@ func TestStatusUsesOneCompactMetricRow(t *testing.T) {
 
 	medium := Model{width: 56, height: 20, noColor: true, snapshot: ipc.Snapshot{State: "live", Metrics: metrics}}
 	mediumLines := medium.renderStatusBlock(4)
-	if len(mediumLines) != 2 || !strings.Contains(mediumLines[1], "Limit:") || !strings.Contains(mediumLines[1], "Ctx:") || strings.Contains(mediumLines[1], "258k") {
-		t.Fatalf("medium status did not fit compact metrics after hiding context capacity: %q", mediumLines)
+	if len(mediumLines) != 2 || !strings.Contains(mediumLines[1], "Limit:") || !strings.Contains(mediumLines[1], "Ctx: 258k") {
+		t.Fatalf("medium status did not use space freed by the unavailable quota: %q", mediumLines)
 	}
 
 	wide := medium
 	wide.width = 80
 	if lines := wide.renderStatusBlock(4); len(lines) != 2 || !strings.Contains(lines[1], " | Ctx: 258k") || !strings.Contains(lines[1], "(3h)") || strings.Contains(lines[1], "3h1m") {
 		t.Fatalf("wide status did not combine semantic groups: %q", lines)
+	}
+
+	metrics.FiveHour = &provider.QuotaWindow{UsedPercent: 0}
+	zeroOutput := strings.Join(wide.renderStatusBlock(4), "\n")
+	if !strings.Contains(zeroOutput, "5h:") || !strings.Contains(zeroOutput, "0%") {
+		t.Fatalf("status hid an available zero-percent quota: %q", zeroOutput)
 	}
 }
 
@@ -1090,8 +1095,8 @@ func TestNewPromptDoesNotMovePausedSelection(t *testing.T) {
 		{ID: "one", Text: "first"}, {ID: "two", Text: "second"}, {ID: "three", Text: "third"},
 	}}})
 	model = updated.(Model)
-	if model.selectedID != "one" || model.newCount != 1 || model.following {
-		t.Fatalf("new prompt moved paused selection: selected=%q new=%d following=%v", model.selectedID, model.newCount, model.following)
+	if model.selectedID != "one" || model.following {
+		t.Fatalf("new prompt moved paused selection: selected=%q following=%v", model.selectedID, model.following)
 	}
 }
 
@@ -1138,7 +1143,7 @@ func TestNewPromptDoesNotRevealOffscreenSelection(t *testing.T) {
 		State: "live", Prompts: append(prompts, provider.UserPrompt{ID: "prompt-8", Text: "prompt-8"}),
 	}})
 	model = updated.(Model)
-	if model.offset != 0 || model.selectedID != "prompt-7" || model.newCount != 1 || model.following {
+	if model.offset != 0 || model.selectedID != "prompt-7" || model.following {
 		t.Fatalf("new prompt disturbed an offscreen selection: %#v", model)
 	}
 }
@@ -1191,7 +1196,7 @@ func TestSelectionAndExpansionSurviveResizeAndIncrementalSnapshot(t *testing.T) 
 
 func TestEmptySnapshotResetsSessionViewState(t *testing.T) {
 	model := Model{
-		width: 40, height: 20, noColor: true, selectedID: "one", newCount: 2, offset: 3,
+		width: 40, height: 20, noColor: true, selectedID: "one", offset: 3,
 		expanded: map[string]bool{"one": true},
 		snapshot: ipc.Snapshot{State: "live", Prompts: []provider.UserPrompt{{ID: "one", Text: numberedLines("first", 10)}}},
 	}
@@ -1200,7 +1205,7 @@ func TestEmptySnapshotResetsSessionViewState(t *testing.T) {
 		Notice: "Session resumed. Showing new prompts only.",
 	}})
 	model = updated.(Model)
-	if model.selectedID != "" || len(model.expanded) != 0 || model.newCount != 0 || model.offset != 0 || !model.following {
+	if model.selectedID != "" || len(model.expanded) != 0 || model.offset != 0 || !model.following {
 		t.Fatalf("session view state was not reset: %#v", model)
 	}
 	if output := model.render(); !strings.Contains(output, "Session resumed") || !strings.Contains(output, "new prompts") {
@@ -1320,16 +1325,50 @@ func TestViewerHasNoBrandHeaderAndFooterOwnsStatus(t *testing.T) {
 	}
 }
 
-func TestFooterShowsOnlyStatusUntilNewPromptsNeedAction(t *testing.T) {
-	model := Model{width: 48, height: 12, noColor: true, snapshot: ipc.Snapshot{State: "live", Prompts: []provider.UserPrompt{{ID: "one", Text: "first"}, {ID: "two", Text: "second"}}}}
-	footer := model.renderFooter(false)
-	if !strings.Contains(footer, "[LIVE]") || !strings.Contains(footer, "h help") || strings.Contains(footer, "2 [LIVE]") {
-		t.Fatalf("ordinary footer contains redundant prompt count or misses help: %q", footer)
+func TestBelowNoticeUsesLastVisiblePromptAndAlignsWithStatus(t *testing.T) {
+	prompts := make([]provider.UserPrompt, 8)
+	for index := range prompts {
+		prompts[index] = provider.UserPrompt{ID: fmt.Sprintf("prompt-%d", index), Text: fmt.Sprintf("prompt-%d", index)}
 	}
-	model.newCount = 3
-	footer = model.renderFooter(false)
-	if !strings.Contains(footer, "3 new · End latest") || strings.Contains(footer, "h help") {
-		t.Fatalf("paused footer did not prioritize the latest action: %q", footer)
+	model := Model{width: 48, height: 10, noColor: true, selectedID: "prompt-7", offset: 0,
+		snapshot: ipc.Snapshot{State: "live", Prompts: prompts}}
+	lines := strings.Split(model.render(), "\n")
+	if got := lines[len(lines)-3]; got != " ↓ 4 prompts below" {
+		t.Fatalf("below notice did not use the last visible prompt: %q", lines)
+	}
+	if !strings.HasPrefix(lines[len(lines)-3], " ") || !strings.HasPrefix(lines[len(lines)-2], " [LIVE]") {
+		t.Fatalf("below notice and status were not left-aligned: %q", lines)
+	}
+	if strings.Contains(strings.Join(lines, "\n"), "End") {
+		t.Fatalf("below notice exposed an unwanted End hint: %q", lines)
+	}
+
+	model.scroll(1000)
+	if strings.Contains(model.render(), "below") {
+		t.Fatalf("below notice remained visible at the bottom: %q", model.render())
+	}
+}
+
+func TestBelowNoticeHandlesSingularContinuationAndCompactHeight(t *testing.T) {
+	model := Model{width: 40, height: 8, noColor: true, selectedID: "two", offset: 0,
+		snapshot: ipc.Snapshot{State: "live", Metrics: &provider.SessionMetrics{TotalTokens: 100}, Prompts: []provider.UserPrompt{
+			{ID: "one", Text: numberedLines("first", 5)},
+			{ID: "two", Text: "second"},
+		}}}
+	output := model.render()
+	if !strings.Contains(output, "↓ 1 prompt below") || strings.Contains(output, "Total:") || strings.Contains(output, "h help") || !strings.Contains(output, "[LIVE]") {
+		t.Fatalf("compact view did not prioritize the singular below notice and status: %q", output)
+	}
+	model.height = 4
+	if output := model.render(); !strings.Contains(output, "↓ 1 prompt below") || strings.Contains(output, "T 100") || strings.Contains(output, "h help") || !strings.Contains(output, "[LIVE]") {
+		t.Fatalf("short view did not prioritize the below notice and status: %q", output)
+	}
+
+	model.height = 8
+	model.snapshot.Prompts = []provider.UserPrompt{{ID: "one", Text: numberedLines("first", 12)}}
+	model.selectedID = "one"
+	if output := model.render(); !strings.Contains(output, "↓ More below") {
+		t.Fatalf("long visible prompt did not report remaining content: %q", output)
 	}
 }
 
@@ -1388,7 +1427,7 @@ func TestReadyHelpSeparatesExplanationFromTroubleshootingSteps(t *testing.T) {
 func TestReadyTroubleshootingIsResponsive(t *testing.T) {
 	for _, size := range [][2]int{{20, 6}, {24, 10}, {32, 12}, {48, 20}, {80, 24}} {
 		model := Model{width: size[0], height: size[1], noColor: true, snapshot: ipc.Snapshot{State: "ready"}}
-		footer := model.renderFooter(false)
+		footer := model.renderFooter()
 		if size[0] < 32 && !strings.Contains(footer, "h help") {
 			t.Fatalf("%dx%d ready footer hid compact help: %q", size[0], size[1], footer)
 		}

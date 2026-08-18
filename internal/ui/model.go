@@ -64,7 +64,6 @@ type Model struct {
 	height          int
 	offset          int
 	following       bool
-	newCount        int
 	noColor         bool
 	selectedID      string
 	expanded        map[string]bool
@@ -234,7 +233,6 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case snapshotMsg:
 		m.resetPendingClick()
 		m.resetTextSelection()
-		added := len(msg.snapshot.Prompts) - len(m.snapshot.Prompts)
 		wasFollowing := m.following
 		m.snapshot = msg.snapshot
 		if len(m.snapshot.Prompts) == 0 {
@@ -242,19 +240,14 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.expanded = make(map[string]bool)
 			m.offset = 0
 			m.following = true
-			m.newCount = 0
 		} else if wasFollowing {
 			m.selectedID = m.snapshot.Prompts[len(m.snapshot.Prompts)-1].ID
 			m.offset = m.maxOffset()
-			m.newCount = 0
 		} else {
 			if m.selectedIndex() < 0 {
 				m.selectedID = m.snapshot.Prompts[len(m.snapshot.Prompts)-1].ID
 			}
 			m.clampOffset()
-			if added > 0 {
-				m.newCount += added
-			}
 		}
 		readCmd := readSnapshot(m.decoder)
 		return m, readCmd
@@ -423,7 +416,6 @@ func (m *Model) selectPrompt(index int) bool {
 	m.selectedID = m.snapshot.Prompts[index].ID
 	m.following = index == len(m.snapshot.Prompts)-1
 	if m.following {
-		m.newCount = 0
 		m.offset = m.maxOffset()
 		return changed
 	}
@@ -624,6 +616,47 @@ func (m Model) maxOffset() int {
 	return max
 }
 
+func (m Model) promptsBelow(bodyHeight int) (int, bool) {
+	if m.showHelp || m.following || m.width < 20 || len(m.snapshot.Prompts) == 0 {
+		return 0, false
+	}
+	layout := m.layoutBody()
+	maximum := max(0, len(layout.lines)-bodyHeight)
+	offset := min(max(0, m.offset), maximum)
+	if offset >= maximum {
+		return 0, false
+	}
+	viewportEnd := offset + bodyHeight
+	lastVisible := -1
+	for index, prompt := range layout.prompts {
+		end := prompt.end
+		if index < len(layout.prompts)-1 {
+			end++
+		}
+		if prompt.start < viewportEnd && end > offset {
+			lastVisible = index
+		}
+	}
+	if lastVisible < 0 {
+		return len(layout.prompts), true
+	}
+	return len(layout.prompts) - lastVisible - 1, true
+}
+
+func (m Model) belowNotice() string {
+	count, visible := m.promptsBelow(m.bodyHeight())
+	if !visible {
+		return ""
+	}
+	text := "↓ More below"
+	if count == 1 {
+		text = "↓ 1 prompt below"
+	} else if count > 1 {
+		text = fmt.Sprintf("↓ %d prompts below", count)
+	}
+	return " " + m.styleAction(text)
+}
+
 func (m Model) bodyHeight() int {
 	height := m.height
 	if m.showHelp {
@@ -637,6 +670,9 @@ func (m Model) bodyHeight() int {
 			height -= len(m.renderStatusBlock(2))
 		} else if m.height >= 3 {
 			height--
+			if _, visible := m.promptsBelow(max(1, height)); visible {
+				height--
+			}
 		}
 	}
 	if height < 1 {
@@ -668,7 +704,7 @@ func (m Model) render() string {
 			lines = append(lines, "")
 		}
 		if m.height >= 2 {
-			lines = append(lines, m.renderFooter(true))
+			lines = append(lines, m.renderFooter())
 		}
 		return fitLines(lines, m.width, m.height)
 	}
@@ -682,16 +718,24 @@ func (m Model) render() string {
 
 	lines := visible
 	if m.showHelp && m.height >= 3 {
-		lines = append(lines, m.renderFooter(m.height < 8))
+		lines = append(lines, m.renderFooter())
 	} else if m.height >= 10 {
-		lines = append(lines, "")
+		lines = append(lines, m.belowNotice())
 		lines = append(lines, m.renderStatusBlock(2)...)
 	} else if m.height >= 6 {
-		lines = append(lines, m.renderStatusBlock(2)...)
+		if notice := m.belowNotice(); notice != "" {
+			lines = append(lines, notice)
+			lines = append(lines, m.renderStatusBlock(1)...)
+		} else {
+			lines = append(lines, m.renderStatusBlock(2)...)
+		}
 	} else if m.height >= 8 {
-		lines = append(lines, "", m.renderFooter(false))
+		lines = append(lines, "", m.renderFooter())
 	} else if m.height >= 3 {
-		lines = append(lines, m.renderFooter(true))
+		if notice := m.belowNotice(); notice != "" {
+			lines = append(lines, notice)
+		}
+		lines = append(lines, m.renderFooter())
 	}
 	return fitLines(lines, m.width, m.height)
 }
@@ -733,14 +777,16 @@ func (m Model) renderTextSelection(line string, row int) string {
 	return prefix + selectionStyle.Render(selected) + suffix
 }
 
-func (m Model) renderFooter(compactHeight bool) string {
+func (m Model) renderFooter() string {
 	left := " " + m.styleState("["+stateLabel(m.snapshot.State)+"]")
 	if m.width < 20 {
 		return left
 	}
 
 	actions := "h help"
-	if m.showHelp {
+	if !m.showHelp && m.belowNotice() != "" {
+		actions = ""
+	} else if m.showHelp {
 		actions = "↑/↓ select theme · Enter save · Esc cancel"
 		if m.width < 52 {
 			actions = "↑/↓ theme · Enter save · Esc cancel"
@@ -753,11 +799,6 @@ func (m Model) renderFooter(compactHeight bool) string {
 		}
 	} else if m.snapshot.Metrics != nil && m.height < 6 {
 		actions = m.compactMetrics()
-	} else if m.newCount > 0 {
-		actions = fmt.Sprintf("%d new · End latest", m.newCount)
-		if compactHeight || m.width < 32 {
-			actions = fmt.Sprintf("%d new · End", m.newCount)
-		}
 	}
 	right := m.styleAction(actions + " ")
 	gap := m.width - ansi.StringWidth(left) - ansi.StringWidth(right)
@@ -958,6 +999,7 @@ func (m Model) themePreviewLines() []string {
 			m.styleColor("[LIVE]", colors.Success),
 			"1 Other prompt",
 			m.styleSelected("2 Selected prompt"),
+			m.styleAction("↓ 3 prompts below"),
 			m.styleAction("h help"),
 		},
 		{
@@ -1046,7 +1088,7 @@ func (m Model) renderStatusBlock(maxLines int) []string {
 		return nil
 	}
 	if maxLines == 1 {
-		return []string{m.renderFooter(true)}
+		return []string{m.renderFooter()}
 	}
 	lines := []string{m.renderStatusHeader()}
 	if m.snapshot.Metrics == nil {
@@ -1173,11 +1215,15 @@ func (m Model) compactMetricRow(available int) string {
 		{true, false, false, false},
 	}
 	build := func(width int, layout layout) string {
-		row := m.limitMetricText(width, layout.showReset, layout.showLimitLabel)
-		if layout.showContext {
-			row += " | " + m.contextMetricText(width, layout.showCapacity)
+		limit := m.limitMetricText(width, layout.showReset, layout.showLimitLabel)
+		parts := make([]string, 0, 2)
+		if limit != "" {
+			parts = append(parts, limit)
 		}
-		return row
+		if layout.showContext || limit == "" {
+			parts = append(parts, m.contextMetricText(width, layout.showCapacity))
+		}
+		return strings.Join(parts, " | ")
 	}
 	for _, layout := range layouts {
 		if row := build(barWidth, layout); ansi.StringWidth(row) <= available {
@@ -1201,19 +1247,21 @@ func (m Model) compactMetricRow(available int) string {
 func (m Model) limitMetricText(barWidth int, resetVisible, labelVisible bool) string {
 	metrics := m.snapshot.Metrics
 	colors := m.visualRoles()
-	fiveHour := m.styleColor("5h: --", colors.Label)
+	limits := make([]string, 0, 2)
 	if metrics.FiveHour != nil {
-		fiveHour = m.renderQuota("5h", metrics.FiveHour, barWidth, resetVisible)
+		limits = append(limits, m.renderQuota("5h", metrics.FiveHour, barWidth, resetVisible))
 	}
-	sevenDay := m.styleColor("7d: --", colors.Label)
 	if metrics.SevenDay != nil {
-		sevenDay = m.renderQuota("7d", metrics.SevenDay, barWidth, resetVisible)
+		limits = append(limits, m.renderQuota("7d", metrics.SevenDay, barWidth, resetVisible))
+	}
+	if len(limits) == 0 {
+		return ""
 	}
 	prefix := ""
 	if labelVisible {
 		prefix = m.styleColor("Limit: ", colors.Label)
 	}
-	return prefix + fiveHour + "  " + sevenDay
+	return prefix + strings.Join(limits, "  ")
 }
 
 func (m Model) contextMetricText(barWidth int, capacityVisible bool) string {
