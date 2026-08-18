@@ -36,7 +36,7 @@ codex.pp <codex-args>
 
 1. 校验 Codex、插件和 Zellij。
 2. 创建 `run_id`、一次性 token 与当前用户 IPC endpoint。
-3. Windows 启动器先进入仅属于本进程树且启用 `KILL_ON_JOB_CLOSE` 的 Job Object，再生成 Zellij layout并前台启动 session；本次会话同时显式使用 `on_force_close=quit`。
+3. Windows 程序入口已在任何环境检查、自动修复或外部命令之前进入启用 `KILL_ON_JOB_CLOSE` 的 Job Object；完成就绪检查后生成 Zellij layout并前台启动 session，本次会话同时显式使用 `on_force_close=quit`。
 4. 左侧运行 `prompt-pane _agent codex -- <codex-args>`，由其原样转发 Codex argv；会话选择与恢复由 Codex 自身处理。
 5. 右侧运行 `prompt-pane _view`。
 6. Codex Hook 运行 `prompt-pane _hook codex`，从环境取得 endpoint 与 token，从标准输入取得官方事件 JSON。
@@ -127,7 +127,13 @@ type Event struct {
 - 缺失时由 `setup` 或首次引导自动下载固定版本，验证 SHA-256，安装到用户级 Prompt Pane 数据目录。
 - 不修改 PowerShell Profile、系统 `PATH` 或用户全局 Zellij 配置。
 - 临时 layout 使用左 70%、右 30%，左侧初始聚焦，关闭不必要的 Zellij UI。启动 argv 仅为本次会话覆盖 `mouse_hover_effects=false` 与 `mouse_click_through=true`：前者隐藏窗格边框悬停高亮和 resize 帮助文字，同时保留 `advanced_mouse_actions`、窗格边框与鼠标 resize；后者让首次聚焦点击同时送达目标窗格，使 viewer 可直接开始拖选。两项覆盖适用于 Prompt Pane 创建的整个 Zellij 会话，因此左侧 Codex 的首次聚焦点击也会送达 Codex；程序不启用经过即切换键盘焦点的 `focus_follows_mouse`，也不修改用户全局 Zellij 配置。右侧 viewer command pane 不使用 `close_on_exit`，避免初始化、IPC 或 TUI 失败时吞掉错误；启动器通过本次运行的 `PROMPT_PANE_ZELLIJ_PATH` 传递已发现的 Zellij 绝对路径，viewer 收到 `Ctrl+X` 后由命令编排层使用当前 `ZELLIJ_PANE_ID` 定向关闭右侧窗格。关闭失败时保留 pane 和错误，左侧 Codex 不受影响。
-- Prompt Pane 创建的会话同时覆盖 `on_force_close=quit`，用于 Zellij 能收到关闭信号的正常路径。Windows 启动器额外持有启用 `KILL_ON_JOB_CLOSE` 的匿名 Job Object，并让自身、Zellij 及其后代处于同一进程树约束中；终端直接销毁启动器时，操作系统随 Job 句柄关闭结束当前 Zellij、Codex 和 viewer。Job 不按进程名或会话名扫描，不修改用户全局配置，也不影响其他 Prompt Pane 或 Zellij 会话。
+- Prompt Pane 创建的会话同时覆盖 `on_force_close=quit`，用于 Zellij 能收到关闭信号的正常路径。Windows 程序入口持有启用 `KILL_ON_JOB_CLOSE` 的匿名 Job Object，环境检查、安装、Zellij、Codex、viewer 及其后代继承同一进程树约束；终端直接销毁入口时，操作系统随 Job 句柄关闭结束本次运行的全部子进程。Job 不按进程名或会话名扫描，不修改用户全局配置，也不影响其他 Prompt Pane 或 Zellij 会话。
+
+## 安装事务与活动工作区
+
+- 当前安装仍使用单一受管程序，不提供运行中升级。每个工作区持有当前用户范围的共享活动锁；显式 setup 和启动前自动修复通过独占锁确认没有活动工作区后，才能修改插件、`codex.pp` 与所有权状态。新工作区进入活动状态与刷新检查由同一更新门协调，避免检查后启动之间的竞态。
+- 刷新先完成全部路径、权限、冲突和文件占用预检，再暂存新组件；提交期间插件、快捷入口和所有权状态作为一个事务。任一步失败时按相反顺序恢复旧组件并重新验证，回滚失败必须同时报告原始失败与恢复失败，不得声称环境可用。
+- 版本化启动器、运行中升级和多版本并存保留为后续待办；只有出现明确需求且稳定启动器兼容边界、旧版本清理和回退策略完成设计后才实施，不为当前单版本流程预建目录或转发层。
 
 ## TUI
 

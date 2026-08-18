@@ -275,8 +275,27 @@ func writeState(installed state) error {
 		return fmt.Errorf("encode codex.pp ownership state: %w", err)
 	}
 	data = append(data, '\n')
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".codex-launcher-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create codex.pp ownership state: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if _, err := temporary.Write(data); err != nil {
+		_ = temporary.Close()
 		return fmt.Errorf("write codex.pp ownership state: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("close codex.pp ownership state: %w", err)
+	}
+	if err := os.Chmod(temporaryPath, 0o600); err != nil {
+		return fmt.Errorf("prepare codex.pp ownership state: %w", err)
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("replace codex.pp ownership state: %w", err)
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return fmt.Errorf("activate codex.pp ownership state: %w", err)
 	}
 	return nil
 }

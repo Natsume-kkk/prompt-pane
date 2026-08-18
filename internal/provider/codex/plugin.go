@@ -2,8 +2,11 @@ package codex
 
 import (
 	"bufio"
+	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -11,6 +14,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/Natsume-kkk/prompt-pane/internal/paths"
 	"github.com/Natsume-kkk/prompt-pane/plugins"
@@ -47,7 +52,7 @@ func PluginInstalled(codexPath string) bool {
 }
 
 func pluginListed(codexPath string) bool {
-	output, err := exec.Command(codexPath, "plugin", "list", "--json").Output()
+	output, err := runCodex(codexPath, "plugin", "list", "--json")
 	if err != nil {
 		return false
 	}
@@ -183,8 +188,28 @@ func InstallPlugin(codexPath string) error {
 	if err != nil {
 		return fmt.Errorf("locate Prompt Pane executable: %w", err)
 	}
-	if err := writeMarketplace(root, executable); err != nil {
+	if err := os.MkdirAll(filepath.Dir(root), 0o700); err != nil {
+		return fmt.Errorf("create Prompt Pane data directory: %w", err)
+	}
+	stagedRoot, err := os.MkdirTemp(filepath.Dir(root), ".codex-marketplace-stage-*")
+	if err != nil {
+		return fmt.Errorf("create Prompt Pane marketplace staging directory: %w", err)
+	}
+	defer os.RemoveAll(stagedRoot)
+	if err := writeMarketplace(stagedRoot, executable); err != nil {
 		return err
+	}
+	if err := validateMarketplace(stagedRoot, executable); err != nil {
+		return fmt.Errorf("validate staged Prompt Pane marketplace: %w", err)
+	}
+	if err := os.RemoveAll(root); err != nil {
+		return fmt.Errorf("replace Prompt Pane marketplace: %w", err)
+	}
+	if err := os.Rename(stagedRoot, root); err != nil {
+		return fmt.Errorf("activate Prompt Pane marketplace: %w", err)
+	}
+	if err := validateMarketplace(root, executable); err != nil {
+		return fmt.Errorf("validate active Prompt Pane marketplace: %w", err)
 	}
 	// A previous interrupted setup can leave either registration behind. The
 	// confirmed setup operation replaces only Prompt Pane's exact plugin IDs.
@@ -198,6 +223,27 @@ func InstallPlugin(codexPath string) error {
 	}
 	if !PluginInstalled(codexPath) {
 		return fmt.Errorf("Codex did not activate the installed Prompt Pane plugin")
+	}
+	return nil
+}
+
+func validateMarketplace(root, executable string) error {
+	version, err := embeddedPluginVersion()
+	if err != nil {
+		return err
+	}
+	manifest, err := readPluginManifest(filepath.Join(root, "plugins", pluginName, ".codex-plugin", "plugin.json"))
+	if err != nil {
+		return err
+	}
+	if manifest.Name != pluginName || manifest.Version != version {
+		return fmt.Errorf("plugin manifest identity does not match the embedded plugin")
+	}
+	if !sameFileContents(executable, filepath.Join(root, "plugins", pluginName, "bin", "prompt-pane.exe")) {
+		return fmt.Errorf("plugin executable does not match the current Prompt Pane executable")
+	}
+	if _, err := os.Stat(filepath.Join(root, ".agents", "plugins", "marketplace.json")); err != nil {
+		return err
 	}
 	return nil
 }
@@ -331,10 +377,40 @@ func copyExecutable(source, target string) error {
 }
 
 func runCodex(path string, args ...string) ([]byte, error) {
-	command := exec.Command(path, args...)
-	output, err := command.CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, path, args...)
+	output := &limitedCommandOutput{limit: 1 << 20}
+	command.Stdout = output
+	command.Stderr = output
+	err := command.Run()
 	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, fmt.Errorf("Codex command timed out")
+		}
 		return nil, fmt.Errorf("Codex command failed")
 	}
-	return output, nil
+	return output.Bytes(), nil
+}
+
+type limitedCommandOutput struct {
+	mu    sync.Mutex
+	data  bytes.Buffer
+	limit int
+}
+
+func (o *limitedCommandOutput) Write(data []byte) (int, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	remaining := o.limit - o.data.Len()
+	if remaining > 0 {
+		_, _ = o.data.Write(data[:min(len(data), remaining)])
+	}
+	return len(data), nil
+}
+
+func (o *limitedCommandOutput) Bytes() []byte {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]byte(nil), o.data.Bytes()...)
 }

@@ -60,6 +60,46 @@ func TestInstallInspectAndRemoveCodexAlias(t *testing.T) {
 	}
 }
 
+func TestInstallationSnapshotRestoresExecutableAndOwnershipState(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv(paths.EnvHome, filepath.Join(root, "state"))
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	codexPath := filepath.Join(bin, "codex.cmd")
+	oldExecutable := filepath.Join(root, "prompt-pane-old.exe")
+	newExecutable := filepath.Join(root, "prompt-pane-new.exe")
+	for path, data := range map[string]string{
+		codexPath:     "codex",
+		oldExecutable: "old executable",
+		newExecutable: "new executable",
+	} {
+		if err := os.WriteFile(path, []byte(data), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := Install(codexPath, oldExecutable); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := CaptureInstallation(codexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Install(codexPath, newExecutable); err != nil {
+		t.Fatal(err)
+	}
+	if err := snapshot.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	if _, installed, err := Installed(codexPath, oldExecutable); err != nil || !installed {
+		t.Fatalf("restored installation = %v, err = %v", installed, err)
+	}
+	if _, installed, err := Installed(codexPath, newExecutable); err != nil || installed {
+		t.Fatalf("new installation remained active = %v, err = %v", installed, err)
+	}
+}
+
 func TestInstallAdoptsRunningAliasWithoutReplacingIt(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv(paths.EnvHome, filepath.Join(root, "Prompt Pane data"))

@@ -1,6 +1,6 @@
 //go:build windows
 
-package zellij
+package run
 
 import (
 	"bytes"
@@ -15,17 +15,17 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-const workspaceJobHelperEnvironment = "PROMPT_PANE_WORKSPACE_JOB_HELPER"
+const lifetimeHelperEnvironment = "PROMPT_PANE_LIFETIME_HELPER"
 
-func TestWorkspaceJobKillsChildrenWhenLauncherStops(t *testing.T) {
-	if os.Getenv(workspaceJobHelperEnvironment) == "1" {
-		runWorkspaceJobHelper(t)
+func TestProcessLifetimeKillsChildrenWhenOwnerStops(t *testing.T) {
+	if os.Getenv(lifetimeHelperEnvironment) == "1" {
+		runLifetimeHelper(t)
 		return
 	}
 
 	pidFile := t.TempDir() + `\child.pid`
-	command := exec.Command(os.Args[0], "-test.run=^TestWorkspaceJobKillsChildrenWhenLauncherStops$")
-	command.Env = append(os.Environ(), workspaceJobHelperEnvironment+"=1", "PROMPT_PANE_WORKSPACE_JOB_PID_FILE="+pidFile)
+	command := exec.Command(os.Args[0], "-test.run=^TestProcessLifetimeKillsChildrenWhenOwnerStops$")
+	command.Env = append(os.Environ(), lifetimeHelperEnvironment+"=1", "PROMPT_PANE_LIFETIME_PID_FILE="+pidFile)
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
 	if err := command.Start(); err != nil {
@@ -37,9 +37,9 @@ func TestWorkspaceJobKillsChildrenWhenLauncherStops(t *testing.T) {
 		}
 	})
 
-	childPID := waitForChildPID(t, pidFile, command, &stderr)
+	childPID := waitForLifetimeChildPID(t, pidFile, &stderr)
 	if err := command.Wait(); err != nil {
-		t.Fatalf("wait for helper launcher: %v: %s", err, strings.TrimSpace(stderr.String()))
+		t.Fatalf("wait for lifetime owner: %v: %s", err, strings.TrimSpace(stderr.String()))
 	}
 
 	deadline := time.Now().Add(3 * time.Second)
@@ -47,26 +47,26 @@ func TestWorkspaceJobKillsChildrenWhenLauncherStops(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	if processIsRunning(childPID) {
-		t.Fatalf("child process %d survived its workspace Job Object owner", childPID)
+		t.Fatalf("child process %d survived its process lifetime owner", childPID)
 	}
 }
 
-func runWorkspaceJobHelper(t *testing.T) {
-	if err := containWorkspaceProcessTree(); err != nil {
+func runLifetimeHelper(t *testing.T) {
+	if err := EnsureProcessLifetime(); err != nil {
 		t.Fatal(err)
 	}
 	child := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "Start-Sleep -Seconds 30")
 	if err := child.Start(); err != nil {
 		t.Fatal(err)
 	}
-	pidFile := os.Getenv("PROMPT_PANE_WORKSPACE_JOB_PID_FILE")
+	pidFile := os.Getenv("PROMPT_PANE_LIFETIME_PID_FILE")
 	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(child.Process.Pid)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(100 * time.Millisecond)
 }
 
-func waitForChildPID(t *testing.T, path string, command *exec.Cmd, stderr *bytes.Buffer) uint32 {
+func waitForLifetimeChildPID(t *testing.T, path string, stderr *bytes.Buffer) uint32 {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
@@ -74,16 +74,13 @@ func waitForChildPID(t *testing.T, path string, command *exec.Cmd, stderr *bytes
 		if err == nil {
 			pid, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 32)
 			if err != nil {
-				t.Fatalf("parse helper child PID: %v", err)
+				t.Fatalf("parse lifetime child PID: %v", err)
 			}
 			return uint32(pid)
 		}
-		if command.ProcessState != nil {
-			t.Fatalf("helper exited before publishing child PID: %s", strings.TrimSpace(stderr.String()))
-		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("helper did not publish child PID: %s", strings.TrimSpace(stderr.String()))
+	t.Fatalf("lifetime helper did not publish child PID: %s", strings.TrimSpace(stderr.String()))
 	return 0
 }
 
@@ -100,7 +97,7 @@ func processIsRunning(pid uint32) bool {
 	return exitCode == 259
 }
 
-func TestWorkspaceJobUsesKillOnClose(t *testing.T) {
+func TestProcessLifetimeUsesKillOnClose(t *testing.T) {
 	job, err := newKillOnCloseJob()
 	if err != nil {
 		t.Fatal(err)
@@ -112,6 +109,6 @@ func TestWorkspaceJobUsesKillOnClose(t *testing.T) {
 		t.Fatal(err)
 	}
 	if queried.BasicLimitInformation.LimitFlags&windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE == 0 {
-		t.Fatalf("Job Object limit flags = %#x, want KILL_ON_JOB_CLOSE", queried.BasicLimitInformation.LimitFlags)
+		t.Fatalf("process lifetime flags = %#x, want KILL_ON_JOB_CLOSE", queried.BasicLimitInformation.LimitFlags)
 	}
 }

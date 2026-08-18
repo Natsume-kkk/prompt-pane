@@ -92,8 +92,21 @@ func (a App) launchCodex(codexArgs []string) int {
 	if err != nil {
 		return a.fail("cannot locate the Prompt Pane executable")
 	}
-	if _, err := a.ensureCodexSetup(codexPath, executable, true); err != nil {
+	gate, err := acquireUpdateGate()
+	if err != nil {
 		return a.fail(err.Error())
+	}
+	defer gate.Close()
+	if _, err := a.ensureCodexSetup(codexPath, executable, true, acquireExclusiveWorkspace); err != nil {
+		return a.fail(err.Error())
+	}
+	activity, err := runcontext.AcquireWorkspaceActivity()
+	if err != nil {
+		return a.fail("cannot register the Prompt Pane workspace as active")
+	}
+	defer activity.Close()
+	if err := gate.Close(); err != nil {
+		return a.fail("cannot release the Prompt Pane update gate")
 	}
 	zellijPath, err := zellij.Find()
 	if err != nil {
@@ -133,7 +146,12 @@ func (a App) setupCodex() int {
 	if err != nil {
 		return a.fail(err.Error())
 	}
-	changed, err := a.ensureCodexSetup(codexPath, executable, false)
+	gate, err := acquireUpdateGate()
+	if err != nil {
+		return a.fail(err.Error())
+	}
+	defer gate.Close()
+	changed, err := a.ensureCodexSetup(codexPath, executable, false, acquireExclusiveWorkspace)
 	if err != nil {
 		return a.fail(err.Error())
 	}
@@ -158,7 +176,7 @@ func writeSetupCompletion(out io.Writer, firstInstall bool) {
 	fmt.Fprintln(out, "3. If it does not appear, open `/hooks` in Codex, review and trust Prompt Pane, then restart `codex.pp`.")
 }
 
-func (a App) ensureCodexSetup(codexPath, executable string, beforeLaunch bool) (bool, error) {
+func (a App) ensureCodexSetup(codexPath, executable string, beforeLaunch bool, prepareChange func() (func(), error)) (bool, error) {
 	_, zellijErr := zellij.Find()
 	zellijReady := zellijErr == nil
 	pluginReady := codex.PluginInstalled(codexPath)
@@ -181,6 +199,11 @@ func (a App) ensureCodexSetup(codexPath, executable string, beforeLaunch bool) (
 	if _, err := findPowerShell(); err != nil {
 		return false, err
 	}
+	releaseChange, err := prepareChange()
+	if err != nil {
+		return false, err
+	}
+	defer releaseChange()
 
 	fmt.Fprintln(a.Out, "Prompt Pane will prepare the missing or outdated components:")
 	if !zellijReady {
@@ -196,6 +219,11 @@ func (a App) ensureCodexSetup(codexPath, executable string, beforeLaunch bool) (
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
+	transaction, err := captureSetupTransaction(codexPath, !pluginReady, !aliasReady)
+	if err != nil {
+		return false, fmt.Errorf("prepare installation rollback: %w", err)
+	}
+	defer transaction.discard()
 	steps := setupStepCount(zellijReady, pluginReady, aliasReady)
 	initial := setupui.Progress{Step: 1, Steps: steps, Stage: "Checking environment", Percent: setupPercent(1, steps, 0)}
 	err = setupui.Run(a.Out, completion, initial, func(report setupui.Reporter) error {
@@ -248,6 +276,7 @@ func (a App) ensureCodexSetup(codexPath, executable string, beforeLaunch bool) (
 		if !pluginReady {
 			step++
 			report(setupui.Progress{Step: step, Steps: steps, Stage: "Installing Codex plugin", Percent: setupPercent(step, steps, 0)})
+			transaction.pluginChanged = true
 			if err := codex.InstallPlugin(codexPath); err != nil {
 				return err
 			}
@@ -257,6 +286,7 @@ func (a App) ensureCodexSetup(codexPath, executable string, beforeLaunch bool) (
 		if !aliasReady {
 			step++
 			report(setupui.Progress{Step: step, Steps: steps, Stage: "Installing codex.pp", Percent: setupPercent(step, steps, 0)})
+			transaction.aliasChanged = true
 			if _, err := shortcut.Install(codexPath, executable); err != nil {
 				return err
 			}
@@ -281,9 +311,26 @@ func (a App) ensureCodexSetup(codexPath, executable string, beforeLaunch bool) (
 		return nil
 	})
 	if err != nil {
+		if rollbackErr := transaction.rollback(); rollbackErr != nil {
+			return false, fmt.Errorf("%w; installation rollback failed: %v", err, rollbackErr)
+		}
 		return false, err
 	}
 	return true, nil
+}
+
+func acquireUpdateGate() (runcontext.CoordinationLock, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return runcontext.AcquireUpdateGate(ctx)
+}
+
+func acquireExclusiveWorkspace() (func(), error) {
+	lock, err := runcontext.AcquireExclusiveWorkspaceActivity()
+	if err != nil {
+		return nil, err
+	}
+	return func() { _ = lock.Close() }, nil
 }
 
 func (a App) doctor() int {

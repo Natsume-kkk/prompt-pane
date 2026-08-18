@@ -231,7 +231,9 @@ func TestLaunchRepairNeedsNoConfirmationAndSetupRunsFinalChecks(t *testing.T) {
 
 	var output bytes.Buffer
 	app := App{In: failOnRead{t}, Out: &output, Err: &output}
-	changed, err := app.ensureCodexSetup(codexPath, executable, true)
+	changed, err := app.ensureCodexSetup(codexPath, executable, true, func() (func(), error) {
+		return func() {}, nil
+	})
 	if err != nil || !changed {
 		t.Fatalf("changed = %v, err = %v", changed, err)
 	}

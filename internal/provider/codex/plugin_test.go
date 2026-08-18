@@ -162,3 +162,69 @@ func TestPreflightInstallAccessSupportsCustomUnicodePaths(t *testing.T) {
 		}
 	}
 }
+
+func TestInstallationSnapshotRestoresMarketplaceAndRegistration(t *testing.T) {
+	root := t.TempDir()
+	promptPaneHome := filepath.Join(root, "prompt-pane-home")
+	codexConfig := filepath.Join(root, "codex-home")
+	t.Setenv("PROMPT_PANE_HOME", promptPaneHome)
+	t.Setenv("CODEX_HOME", codexConfig)
+	if err := os.MkdirAll(codexConfig, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	config := "[plugins.\"prompt-pane@prompt-pane\"]\nenabled = true\n"
+	if err := os.WriteFile(filepath.Join(codexConfig, "config.toml"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	codexPath := filepath.Join(root, "codex.cmd")
+	command := "@echo {\"installed\":[{\"name\":\"prompt-pane\",\"installed\":true,\"enabled\":true,\"marketplaceName\":\"prompt-pane\"}]}\r\n"
+	if err := os.WriteFile(codexPath, []byte(command), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marketplace, err := marketplaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldFile := filepath.Join(marketplace, "plugins", pluginName, "old.txt")
+	if err := os.MkdirAll(filepath.Dir(oldFile), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(oldFile, []byte("old marketplace"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := CaptureInstallation(codexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snapshot.Discard()
+	if err := os.RemoveAll(marketplace); err != nil {
+		t.Fatal(err)
+	}
+	newFile := filepath.Join(marketplace, "new.txt")
+	if err := os.MkdirAll(marketplace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(newFile, []byte("new marketplace"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := snapshot.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(oldFile)
+	if err != nil || string(data) != "old marketplace" {
+		t.Fatalf("restored marketplace = %q, err = %v", data, err)
+	}
+	if _, err := os.Stat(newFile); !os.IsNotExist(err) {
+		t.Fatalf("failed marketplace content remained: %v", err)
+	}
+}
+
+func TestCodexCommandOutputIsBoundedWithoutBlockingWriter(t *testing.T) {
+	output := &limitedCommandOutput{limit: 4}
+	if written, err := output.Write([]byte("123456")); err != nil || written != 6 {
+		t.Fatalf("write = %d, err = %v", written, err)
+	}
+	if got := string(output.Bytes()); got != "1234" {
+		t.Fatalf("bounded output = %q", got)
+	}
+}

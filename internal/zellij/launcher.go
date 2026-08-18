@@ -17,9 +17,6 @@ const (
 )
 
 func Launch(path, executable string, run runcontext.Context, codexArgs []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	if err := containWorkspaceProcessTree(); err != nil {
-		return fmt.Errorf("contain Zellij workspace process tree: %w", err)
-	}
 	command := exec.Command(path, launchArguments(executable, codexArgs)...)
 	overrides := launchOverrides(path, executable, run, os.Getenv("PATH"))
 	command.Env = mergeEnvironment(os.Environ(), overrides)
