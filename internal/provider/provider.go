@@ -27,7 +27,6 @@ type QuotaWindow struct {
 }
 
 type SessionMetrics struct {
-	Project            string       `json:"project,omitempty"`
 	Branch             string       `json:"branch,omitempty"`
 	Added              int          `json:"added,omitempty"`
 	Deleted            int          `json:"deleted,omitempty"`

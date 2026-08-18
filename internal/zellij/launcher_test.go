@@ -48,19 +48,19 @@ func TestLaunchOverridesExposeTheExactZellijExecutable(t *testing.T) {
 }
 
 func TestClosePaneTargetsTheCurrentPane(t *testing.T) {
-	command, err := closePaneCommand(`C:\Prompt Pane\zellij.exe`, "terminal_7")
+	arguments, err := closePaneArguments(`C:\Prompt Pane\zellij.exe`, "terminal_7")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{`C:\Prompt Pane\zellij.exe`, "action", "close-pane", "--pane-id", "terminal_7"}
-	if !slices.Equal(command.Args, want) {
-		t.Fatalf("close pane argv = %q, want %q", command.Args, want)
+	want := []string{"action", "close-pane", "--pane-id", "terminal_7"}
+	if !slices.Equal(arguments, want) {
+		t.Fatalf("close pane argv = %q, want %q", arguments, want)
 	}
 	for _, test := range []struct {
 		path   string
 		paneID string
 	}{{paneID: "terminal_7"}, {path: `C:\Prompt Pane\zellij.exe`}} {
-		if _, err := closePaneCommand(test.path, test.paneID); err == nil {
+		if _, err := closePaneArguments(test.path, test.paneID); err == nil {
 			t.Fatalf("accepted incomplete close target: %#v", test)
 		}
 	}

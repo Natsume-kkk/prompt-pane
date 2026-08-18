@@ -2,7 +2,6 @@ package codex
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -11,13 +10,12 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Natsume-kkk/prompt-pane/internal/paths"
+	processutil "github.com/Natsume-kkk/prompt-pane/internal/process"
 	"github.com/Natsume-kkk/prompt-pane/plugins"
 )
 
@@ -379,38 +377,12 @@ func copyExecutable(source, target string) error {
 func runCodex(path string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, path, args...)
-	output := &limitedCommandOutput{limit: 1 << 20}
-	command.Stdout = output
-	command.Stderr = output
-	err := command.Run()
+	output, err := processutil.Output(ctx, path, args, processutil.OutputOptions{Limit: 1 << 20})
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		if errors.Is(err, context.DeadlineExceeded) {
 			return nil, fmt.Errorf("Codex command timed out")
 		}
 		return nil, fmt.Errorf("Codex command failed")
 	}
-	return output.Bytes(), nil
-}
-
-type limitedCommandOutput struct {
-	mu    sync.Mutex
-	data  bytes.Buffer
-	limit int
-}
-
-func (o *limitedCommandOutput) Write(data []byte) (int, error) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	remaining := o.limit - o.data.Len()
-	if remaining > 0 {
-		_, _ = o.data.Write(data[:min(len(data), remaining)])
-	}
-	return len(data), nil
-}
-
-func (o *limitedCommandOutput) Bytes() []byte {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	return append([]byte(nil), o.data.Bytes()...)
+	return output, nil
 }

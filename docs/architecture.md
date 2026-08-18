@@ -44,6 +44,8 @@ codex.pp <codex-args>
 
 Codex 参数保留为 argv，不经过 Shell 字符串。`run_id`、认证 token 与 endpoint 只通过进程环境传递，不写运行清单或日志。
 
+PowerShell、Git、Codex 插件管理和 Zellij 探测／关闭等短时外部命令统一使用有截止时间和输出上限的执行边界；前台 Codex 与 Zellij 属于运行期长进程，由会话生命周期和 Windows Job Object 管理，不套用短命令截止时间。
+
 ## 运行身份与状态
 
 状态机：

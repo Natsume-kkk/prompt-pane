@@ -6,12 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	processutil "github.com/Natsume-kkk/prompt-pane/internal/process"
 	"github.com/Natsume-kkk/prompt-pane/internal/provider"
 )
 
@@ -132,14 +131,14 @@ func addGitMetrics(metrics *provider.SessionMetrics, cwd string) {
 	if cwd == "" {
 		return
 	}
-	metrics.Project = filepath.Base(filepath.Clean(cwd))
 	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
 	defer cancel()
 	run := func(arguments ...string) (string, error) {
 		args := append([]string{"-C", cwd}, arguments...)
-		command := exec.CommandContext(ctx, "git", args...)
-		command.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
-		output, err := command.Output()
+		output, err := processutil.Output(ctx, "git", args, processutil.OutputOptions{
+			Env:   append(os.Environ(), "GIT_OPTIONAL_LOCKS=0"),
+			Limit: 1 << 20,
+		})
 		return strings.TrimSpace(string(output)), err
 	}
 	branch, err := run("branch", "--show-current")

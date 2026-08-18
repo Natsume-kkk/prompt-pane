@@ -218,13 +218,3 @@ func TestInstallationSnapshotRestoresMarketplaceAndRegistration(t *testing.T) {
 		t.Fatalf("failed marketplace content remained: %v", err)
 	}
 }
-
-func TestCodexCommandOutputIsBoundedWithoutBlockingWriter(t *testing.T) {
-	output := &limitedCommandOutput{limit: 4}
-	if written, err := output.Write([]byte("123456")); err != nil || written != 6 {
-		t.Fatalf("write = %d, err = %v", written, err)
-	}
-	if got := string(output.Bytes()); got != "1234" {
-		t.Fatalf("bounded output = %q", got)
-	}
-}

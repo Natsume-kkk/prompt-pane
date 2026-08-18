@@ -39,7 +39,6 @@ type Roles struct {
 	Success   string
 	Warning   string
 	Error     string
-	Project   string
 	Branch    string
 	Added     string
 	Deleted   string
@@ -119,7 +118,7 @@ func Resolve(name string, lightBackground bool) Palette {
 func Derive(p Palette) Roles {
 	return Roles{
 		Muted: p.Overlay0, Accent: p.Sapphire, Success: p.Green, Warning: p.Yellow,
-		Error: p.Red, Project: p.Green, Branch: p.Red, Added: p.Green, Deleted: p.Red,
+		Error: p.Red, Branch: p.Red, Added: p.Green, Deleted: p.Red,
 		Untracked: p.Mauve, Label: p.Pink, Token: p.Peach, Model: p.Blue,
 		Selection: p.Sapphire, ThemePick: p.Mauve, Cell: p.Cell,
 	}

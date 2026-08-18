@@ -1,12 +1,15 @@
 package zellij
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Natsume-kkk/prompt-pane/internal/paths"
+	processutil "github.com/Natsume-kkk/prompt-pane/internal/process"
 )
 
 const Version = "0.44.3"
@@ -33,7 +36,9 @@ func ManagedPath() (string, error) {
 }
 
 func compatible(path string) bool {
-	output, err := exec.Command(path, "--version").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	output, err := processutil.Output(ctx, path, []string{"--version"}, processutil.OutputOptions{Limit: 4 << 10})
 	return err == nil && strings.TrimSpace(string(output)) == "zellij "+Version
 }
 

@@ -1,13 +1,17 @@
 package zellij
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
+	processutil "github.com/Natsume-kkk/prompt-pane/internal/process"
 	runcontext "github.com/Natsume-kkk/prompt-pane/internal/run"
 )
 
@@ -30,24 +34,29 @@ func Launch(path, executable string, run runcontext.Context, codexArgs []string,
 }
 
 func ClosePane(path, paneID string) error {
-	command, err := closePaneCommand(path, paneID)
+	args, err := closePaneArguments(path, paneID)
 	if err != nil {
 		return err
 	}
-	if err := command.Run(); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if _, err := processutil.Output(ctx, path, args, processutil.OutputOptions{Limit: 4 << 10}); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("close viewer pane timed out")
+		}
 		return fmt.Errorf("close viewer pane: %w", err)
 	}
 	return nil
 }
 
-func closePaneCommand(path, paneID string) (*exec.Cmd, error) {
+func closePaneArguments(path, paneID string) ([]string, error) {
 	if path == "" {
 		return nil, fmt.Errorf("Zellij executable path is missing")
 	}
 	if paneID == "" {
 		return nil, fmt.Errorf("Zellij pane ID is missing")
 	}
-	return exec.Command(path, "action", "close-pane", "--pane-id", paneID), nil
+	return []string{"action", "close-pane", "--pane-id", paneID}, nil
 }
 
 func launchOverrides(path, executable string, run runcontext.Context, inheritedPath string) []string {

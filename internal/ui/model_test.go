@@ -699,7 +699,7 @@ func TestHelpSavesThemeSelection(t *testing.T) {
 
 func TestStatusLineUsesThemeRolesAndFitsWidth(t *testing.T) {
 	model := Model{width: 48, height: 12, snapshot: ipc.Snapshot{State: "live", Metrics: &provider.SessionMetrics{
-		Project: "prompt-pane", Branch: "main", Model: "gpt-5", TotalTokens: 12500, ContextUsedPercent: 42,
+		Branch: "main", Model: "gpt-5", TotalTokens: 12500, ContextUsedPercent: 42,
 		FiveHour: &provider.QuotaWindow{UsedPercent: 75}, SevenDay: &provider.QuotaWindow{UsedPercent: 92},
 	}}}
 	model.applyTheme(theme.Dracula)
@@ -756,7 +756,7 @@ func TestProgressBarUsesForegroundFillAndDottedRemainder(t *testing.T) {
 
 func TestDefaultStatusKeepsShortTokenTrackerBars(t *testing.T) {
 	metrics := &provider.SessionMetrics{
-		Project: "prompt-pane", Branch: "main", Model: "gpt-5", TotalTokens: 23000,
+		Branch: "main", Model: "gpt-5", TotalTokens: 23000,
 		ContextWindow: 258000, ContextUsedPercent: 9,
 		FiveHour: &provider.QuotaWindow{UsedPercent: 21}, SevenDay: &provider.QuotaWindow{UsedPercent: 44},
 	}
