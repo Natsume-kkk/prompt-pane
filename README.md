@@ -87,9 +87,10 @@ codex.pp resume
 | 展开／折叠长 prompt | `Enter` |
 | 打开 Help 和主题设置 | `h` |
 | 关闭右侧 viewer | `Ctrl+X` |
+| 退出整个工作区 | 关闭终端或使用 Zellij 的 `Ctrl+Q` |
 | 复制可见文字 | 按住左键拖动，松开后复制 |
 
-关闭 viewer 不会退出左侧 Codex。如果拖动无法复制，可以按住 `Shift` 使用终端原生选择。
+关闭 viewer 不会退出左侧 Codex；关闭终端会结束当前 Prompt Pane 工作区及其中的 Codex。如果拖动无法复制，可以按住 `Shift` 使用终端原生选择。
 
 <p align="center">
   <img src="docs/assets/prompt-pane-themes.png" alt="Prompt Pane Help 与六套主题预览" width="420">

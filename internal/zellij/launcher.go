@@ -62,6 +62,7 @@ func launchArguments(executable string, codexArgs []string) []string {
 	return []string{
 		"--layout-string", Layout(executable, codexArgs),
 		"options",
+		"--on-force-close", "quit",
 		"--mouse-hover-effects", "false",
 		"--mouse-click-through", "true",
 	}
