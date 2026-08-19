@@ -332,6 +332,31 @@ func TestHelpFooterExplainsThemeSelectionAndSavingAtResponsiveWidths(t *testing.
 	}
 }
 
+func TestHelpExplainsGitStatusAtResponsiveWidths(t *testing.T) {
+	for _, width := range []int{20, 24, 32, 48, 80} {
+		model := Model{width: width, noColor: true, snapshot: ipc.Snapshot{State: "live"}}
+		lines := model.helpLines()
+		output := strings.Join(lines, "\n")
+		for _, expected := range []string{"Git status", "branch", "Tracked changes", "Added lines", "Deleted lines", "Untracked"} {
+			if !strings.Contains(output, expected) {
+				t.Fatalf("width=%d help omitted Git status meaning %q: %q", width, expected, output)
+			}
+		}
+		inGitStatus := false
+		for _, line := range lines {
+			heading := strings.TrimSpace(ansi.Strip(line))
+			if heading == "Git status" {
+				inGitStatus = true
+			} else if heading == "Theme" {
+				inGitStatus = false
+			}
+			if inGitStatus && ansi.StringWidth(line) > width {
+				t.Fatalf("width=%d Git help exceeded width: %q", width, line)
+			}
+		}
+	}
+}
+
 func TestCompactHelpScrollsWithoutChangingPromptReadingState(t *testing.T) {
 	for _, size := range [][2]int{{20, 6}, {24, 10}} {
 		model := Model{width: size[0], height: size[1], noColor: true, following: false, selectedID: "one", offset: 1,

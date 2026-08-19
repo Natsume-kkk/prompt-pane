@@ -92,6 +92,18 @@ codex.pp resume
 
 关闭 viewer 不会退出左侧 Codex；关闭终端会结束当前 Prompt Pane 工作区及其中的 Codex。如果拖动无法复制，可以按住 `Shift` 使用终端原生选择。
 
+状态栏中的 Git 信息采用 `(main* +1334 -2199 ?7)` 这样的格式：
+
+| 显示 | 含义 |
+|---|---|
+| `main` | 当前 Git 分支 |
+| `*` | 存在已跟踪文件改动 |
+| `+N` | 已暂存和未暂存的已跟踪文件相对 `HEAD` 累计新增行数 |
+| `-N` | 已暂存和未暂存的已跟踪文件相对 `HEAD` 累计删除行数 |
+| `?N` | 排除 `.gitignore` 后的未跟踪文件数 |
+
+增删数字是代码行数，不是文件数，也不是分支领先或落后的提交数。按 `h` 打开 Help 也可以查看这些符号的含义。
+
 <p align="center">
   <img src="docs/assets/prompt-pane-themes.png" alt="Prompt Pane Help 与六套主题预览" width="420">
 </p>

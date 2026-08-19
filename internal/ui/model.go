@@ -889,6 +889,14 @@ func (m Model) helpLines() []string {
 			"   Enter Expand/fold",
 			"   Drag   Copy text",
 			"   c      Fold all",
+			"",
+			" Git status",
+			"   branch Current",
+			"   * Tracked changes",
+			"   +N Added lines",
+			"   -N Deleted lines",
+			"   ?N Untracked",
+			"      files",
 		)
 	} else {
 		entries = append(entries,
@@ -907,11 +915,30 @@ func (m Model) helpLines() []string {
 			helpEntry("Enter", "Expand or fold"),
 			helpEntry("Drag", "Copy visible text"),
 			helpEntry("c", "Fold all"),
+			"",
+			" Git status",
 		)
+		if m.width < 52 {
+			entries = append(entries,
+				helpEntry("branch", "Current branch"),
+				helpEntry("*", "Tracked changes"),
+				helpEntry("+N", "Added lines"),
+				helpEntry("-N", "Deleted lines"),
+				helpEntry("?N", "Untracked files"),
+			)
+		} else {
+			entries = append(entries,
+				helpEntry("branch", "Current Git branch"),
+				helpEntry("*", "Tracked changes vs HEAD"),
+				helpEntry("+N", "Added lines vs HEAD"),
+				helpEntry("-N", "Deleted lines vs HEAD"),
+				helpEntry("?N", "Untracked files"),
+			)
+		}
 	}
 	for index, entry := range entries {
 		switch strings.TrimSpace(entry) {
-		case "Help", "Connection", "Viewer", "Navigate", "Prompt":
+		case "Help", "Connection", "Viewer", "Navigate", "Prompt", "Git status":
 			entries[index] = m.styleAction(entry)
 		}
 	}
@@ -1078,7 +1105,8 @@ func helpLabelWidth() int {
 	width := 0
 	for _, label := range []string{
 		"Ctrl+X", "h/Esc", "↑/k", "↓/j", "PgUp/PgDn", "Home", "End",
-		"Enter", "Drag", "c", "Alt+←/→", "Drag edge", "Alt+=/-", "Ctrl+p f",
+		"Enter", "Drag", "c", "branch", "*", "+N", "-N", "?N",
+		"Alt+←/→", "Drag edge", "Alt+=/-", "Ctrl+p f",
 	} {
 		width = max(width, ansi.StringWidth(label))
 	}
