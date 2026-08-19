@@ -234,6 +234,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.resetPendingClick()
 		m.resetTextSelection()
 		wasFollowing := m.following
+		wasAtBottom := m.offset >= m.maxOffset()
+		promptAdded := len(msg.snapshot.Prompts) > len(m.snapshot.Prompts)
 		m.snapshot = msg.snapshot
 		if len(m.snapshot.Prompts) == 0 {
 			m.selectedID = ""
@@ -246,6 +248,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			if m.selectedIndex() < 0 {
 				m.selectedID = m.snapshot.Prompts[len(m.snapshot.Prompts)-1].ID
+			}
+			if promptAdded && wasAtBottom {
+				m.offset = m.maxOffset()
 			}
 			m.clampOffset()
 		}

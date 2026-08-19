@@ -1100,6 +1100,30 @@ func TestNewPromptDoesNotMovePausedSelection(t *testing.T) {
 	}
 }
 
+func TestNewPromptKeepsPausedViewportAtBottom(t *testing.T) {
+	prompts := make([]provider.UserPrompt, 8)
+	for index := range prompts {
+		prompts[index] = provider.UserPrompt{ID: fmt.Sprintf("prompt-%d", index), Text: fmt.Sprintf("prompt-%d", index)}
+	}
+	model := Model{
+		width: 40, height: 8, noColor: true, selectedID: "prompt-3",
+		snapshot: ipc.Snapshot{State: "live", Prompts: prompts},
+	}
+	model.offset = model.maxOffset()
+	previousOffset := model.offset
+
+	updated, _ := model.Update(snapshotMsg{snapshot: ipc.Snapshot{
+		State: "live", Prompts: append(prompts, provider.UserPrompt{ID: "prompt-8", Text: "prompt-8"}),
+	}})
+	model = updated.(Model)
+	if model.maxOffset() <= previousOffset {
+		t.Fatalf("new prompt did not extend the scroll range: old=%d new=%d", previousOffset, model.maxOffset())
+	}
+	if model.offset != model.maxOffset() || model.selectedID != "prompt-3" || model.following {
+		t.Fatalf("new prompt did not keep the paused viewport at the bottom: %#v", model)
+	}
+}
+
 func TestScrollingMovesOnlyTheViewport(t *testing.T) {
 	prompts := make([]provider.UserPrompt, 8)
 	for index := range prompts {
