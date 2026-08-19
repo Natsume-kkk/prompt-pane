@@ -13,6 +13,7 @@ import (
 
 	processutil "github.com/Natsume-kkk/prompt-pane/internal/process"
 	runcontext "github.com/Natsume-kkk/prompt-pane/internal/run"
+	"github.com/Natsume-kkk/prompt-pane/internal/theme"
 )
 
 const (
@@ -20,8 +21,8 @@ const (
 	EnvPaneID     = "ZELLIJ_PANE_ID"
 )
 
-func Launch(path, executable string, run runcontext.Context, codexArgs []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	command := exec.Command(path, launchArguments(executable, codexArgs)...)
+func Launch(path, executable, themeName string, run runcontext.Context, codexArgs []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	command := exec.Command(path, launchArguments(executable, themeName, codexArgs)...)
 	overrides := launchOverrides(path, executable, run, os.Getenv("PATH"))
 	command.Env = mergeEnvironment(os.Environ(), overrides)
 	command.Stdin = stdin
@@ -65,15 +66,35 @@ func launchOverrides(path, executable string, run runcontext.Context, inheritedP
 	return append(overrides, "PATH="+pathValue, EnvExecutable+"="+path)
 }
 
-func launchArguments(executable string, codexArgs []string) []string {
+func launchArguments(executable, themeName string, codexArgs []string) []string {
 	// Since Zellij 0.41, --session targets an existing session when combined
 	// with a layout. Omitting it makes --layout-string create a new session.
-	return []string{
+	arguments := []string{
 		"--layout-string", Layout(executable, codexArgs),
 		"options",
 		"--on-force-close", "quit",
 		"--mouse-hover-effects", "false",
 		"--mouse-click-through", "true",
+	}
+	return append(arguments, zellijThemeArguments(themeName)...)
+}
+
+func zellijThemeArguments(themeName string) []string {
+	themes := map[string]string{
+		theme.Mocha:     "catppuccin-mocha",
+		theme.Latte:     "catppuccin-latte",
+		theme.Frappe:    "catppuccin-frappe",
+		theme.Macchiato: "catppuccin-macchiato",
+		theme.Nord:      "nord",
+		theme.Dracula:   "dracula",
+	}
+	if name, ok := themes[themeName]; ok {
+		return []string{"--theme", name}
+	}
+	return []string{
+		"--theme", "catppuccin-mocha",
+		"--theme-dark", "catppuccin-mocha",
+		"--theme-light", "catppuccin-latte",
 	}
 }
 

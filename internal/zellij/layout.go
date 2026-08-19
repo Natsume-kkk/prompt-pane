@@ -18,7 +18,7 @@ func Layout(executable string, codexArgs []string) string {
         pane size="70%%" command=%s focus=true {
             args %s
         }
-        pane size="30%%" name=" " command=%s {
+        pane size="30%%" name="PROMPTS" command=%s {
             args "_view"
         }
     }
