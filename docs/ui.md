@@ -83,7 +83,7 @@ viewer 的所有页面共享同一套终端网格，不为单个状态临时决�
 
 - 全局颜色使用 Token Tracker 同源的六套主题：`mocha`、`latte`、`frappe`、`macchiato`、`nord`、`dracula`；对应 Hex 色值和语义映射不得近似替换。
 - 主题统一作用于 prompt、选中效果、帮助与排障页、状态栏、Git 状态、setup／刷新反馈和错误状态，不允许页面内硬编码独立颜色。
-- 默认主题为 `auto`：可确认浅色背景时使用 `latte`，其余情况使用 `mocha`。用户确认的主题名称保存到 Prompt Pane 用户配置；`PROMPT_PANE_THEME` 可临时覆盖。外层 Zellij 边框在工作区启动时使用同名内置主题，四套 Catppuccin 主题映射到对应的 Zellij `catppuccin-*` 主题；`auto` 分别使用 `catppuccin-latte` 与 `catppuccin-mocha` 适配浅色和深色背景。Help 中的实时预览不更新外层边框，保存后的主题从下一次工作区启动生效。
+- 默认主题为 `auto`：可确认浅色背景时使用 `latte`，其余情况使用 `mocha`。用户确认的主题名称保存到 Prompt Pane 用户配置；`PROMPT_PANE_THEME` 可临时覆盖。主题只作用于 Prompt Pane 自身，不修改 Zellij 外层边框主题。
 - 真彩色终端使用精确 24-bit RGB；不支持时由渲染层降级到 256 色；`NO_COLOR` 下移除颜色并使用字重、文字和符号保持层级。
 - 未选中提示词编号与正文都使用终端正常前景色；当前选中 prompt 的编号与正文、主要操作使用主题强调色。折叠提示等真正次要信息使用弱化色，`NO_COLOR` 下以加粗区分当前选中 prompt。
 - `READY` 使用强调色，表示进程已启动但提示词链路尚未确认；`LIVE` 使用成功色，`ERROR` 使用错误色，`ENDED` 使用弱化色。限额低于 50% 使用正常色，50%～79% 使用警告色，80% 及以上使用危险色。

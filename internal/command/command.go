@@ -14,13 +14,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/Natsume-kkk/prompt-pane/internal/config"
 	"github.com/Natsume-kkk/prompt-pane/internal/ipc"
 	"github.com/Natsume-kkk/prompt-pane/internal/provider/codex"
 	runcontext "github.com/Natsume-kkk/prompt-pane/internal/run"
 	"github.com/Natsume-kkk/prompt-pane/internal/setupui"
 	"github.com/Natsume-kkk/prompt-pane/internal/shortcut"
-	"github.com/Natsume-kkk/prompt-pane/internal/theme"
 	"github.com/Natsume-kkk/prompt-pane/internal/ui"
 	appversion "github.com/Natsume-kkk/prompt-pane/internal/version"
 	"github.com/Natsume-kkk/prompt-pane/internal/zellij"
@@ -123,11 +121,7 @@ func (a App) launchCodex(codexArgs []string) int {
 		return a.fail(err.Error())
 	}
 	defer server.Close()
-	themeName, _, err := config.LoadTheme()
-	if err != nil {
-		themeName = theme.Auto
-	}
-	if err := zellij.Launch(zellijPath, executable, themeName, run, codexArgs, a.In, a.Out, a.Err); err != nil {
+	if err := zellij.Launch(zellijPath, executable, run, codexArgs, a.In, a.Out, a.Err); err != nil {
 		return a.fail(err.Error())
 	}
 	return 0

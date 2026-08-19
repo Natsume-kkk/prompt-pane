@@ -92,7 +92,7 @@ codex.pp resume
 
 关闭 viewer 不会退出左侧 Codex；关闭终端会结束当前 Prompt Pane 工作区及其中的 Codex。如果拖动无法复制，可以按住 `Shift` 使用终端原生选择。
 
-右侧 Zellij 窗格标题固定显示 `PROMPTS`。外层窗格边框会在每次启动 `codex.pp` 时读取 Prompt Pane 已保存的主题；Help 中的实时预览不会立即改变外层边框，保存后从下一次启动生效。
+右侧 Zellij 窗格标题固定显示 `PROMPTS`；Prompt Pane 的主题只管理右侧 viewer 内部颜色，不修改 Zellij 外层边框主题。
 
 状态栏中的 Git 信息采用 `(main* +1334 -2199 ?7)` 这样的格式：
 
