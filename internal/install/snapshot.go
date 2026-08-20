@@ -1,4 +1,4 @@
-package shortcut
+package install
 
 import (
 	"bytes"
@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 )
 
-type InstallationSnapshot struct {
+type Snapshot struct {
 	files []fileSnapshot
 }
 
@@ -19,17 +19,17 @@ type fileSnapshot struct {
 	present bool
 }
 
-func CaptureInstallation(codexPath string) (*InstallationSnapshot, error) {
-	target, err := Target(codexPath)
+func Capture() (*Snapshot, error) {
+	statePath, err := StatePath()
 	if err != nil {
 		return nil, err
 	}
-	stateFile, err := statePath()
+	launcherPath, err := LauncherPath()
 	if err != nil {
 		return nil, err
 	}
-	snapshot := &InstallationSnapshot{}
-	for _, path := range []string{target, stateFile} {
+	snapshot := &Snapshot{}
+	for _, path := range []string{launcherPath, statePath} {
 		file, err := captureFile(path)
 		if err != nil {
 			return nil, err
@@ -39,7 +39,7 @@ func CaptureInstallation(codexPath string) (*InstallationSnapshot, error) {
 	return snapshot, nil
 }
 
-func (s *InstallationSnapshot) Restore() error {
+func (s *Snapshot) Restore() error {
 	if s == nil {
 		return nil
 	}
@@ -68,7 +68,7 @@ func captureFile(path string) (fileSnapshot, error) {
 		return fileSnapshot{}, fmt.Errorf("inspect installation file %s: %w", path, err)
 	}
 	if !info.Mode().IsRegular() {
-		return fileSnapshot{}, fmt.Errorf("installation file %s is not a regular file", path)
+		return fileSnapshot{}, fmt.Errorf("installation file %s is not regular", path)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -92,9 +92,9 @@ func restoreFile(file fileSnapshot) error {
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(file.path), 0o700); err != nil {
-		return fmt.Errorf("create rollback directory for %s: %w", file.path, err)
+		return err
 	}
-	temporary, err := os.CreateTemp(filepath.Dir(file.path), ".prompt-pane-restore-*.tmp")
+	temporary, err := os.CreateTemp(filepath.Dir(file.path), ".install-restore-*.tmp")
 	if err != nil {
 		return fmt.Errorf("create rollback file for %s: %w", file.path, err)
 	}

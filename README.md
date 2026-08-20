@@ -24,7 +24,9 @@ irm https://raw.githubusercontent.com/Natsume-kkk/prompt-pane/main/scripts/insta
 
 当前稳定版本为 [`v1.1.0`](https://github.com/Natsume-kkk/prompt-pane/releases/tag/v1.1.0)；预编译程序、SHA-256 校验文件和第三方声明统一由该 GitHub Release 提供。
 
-重复运行同一条命令即可升级。脚本会下载 Windows x64 发布物、校验 SHA-256、安装到当前用户目录并配置 Codex 集成；不需要管理员权限，也不会修改 PowerShell Profile、执行策略或系统 `PATH`。刷新受管 Codex 组件前需要先关闭所有正在运行的 Prompt Pane 工作区；插件与 `codex.pp` 会先暂存并校验，任一步失败时恢复刷新前的版本。
+重复运行同一条命令即可升级。脚本会下载并校验 Windows x64 发布物，再交给 Prompt Pane 写入独立版本目录并配置 Codex 集成；不需要管理员权限，也不会修改 PowerShell Profile、执行策略或系统 `PATH`。
+
+如果升级时已有 Prompt Pane 工作区运行，新版会完成暂存，当前和随后并发打开的工作区继续使用旧版。关闭全部旧工作区后，下一次运行 `codex.pp` 会自动激活新版；不需要重跑升级命令。激活失败时继续使用旧版，不会留下混合组件。首次从 `v1.1.0` 的单版本安装迁移到该机制时，需要按提示关闭所有 Prompt Pane 工作区一次。
 
 <details>
 <summary>不允许执行远程脚本，或需要代理时</summary>
@@ -129,7 +131,7 @@ codex.pp resume
 & "$env:APPDATA\PromptPane\bin\prompt-pane.exe" doctor
 ```
 
-错误信息会指出失败的是 GitHub 下载、SHA-256、Zellij、Codex 插件、权限还是 `codex.pp` 冲突，并给出对应处理方向。
+错误信息会指出失败的是 GitHub 下载、SHA-256、版本暂存或激活、Zellij、Codex 插件、权限还是 `codex.pp` 冲突，并给出对应处理方向。`doctor` 还会分别显示当前版本和等待激活版本。
 
 移除 Prompt Pane 管理的 Codex 集成：
 

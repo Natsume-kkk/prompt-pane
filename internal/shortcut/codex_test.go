@@ -43,7 +43,7 @@ func TestInstallInspectAndRemoveCodexAlias(t *testing.T) {
 	if filepath.Base(target) != AliasName {
 		t.Fatalf("target = %q", target)
 	}
-	if _, ok, err := Installed(codexPath, executable); err != nil || !ok {
+	if _, ok, err := Installed(codexPath); err != nil || !ok {
 		t.Fatalf("installed = %v, err = %v", ok, err)
 	}
 	if managed, err := Managed(codexPath); err != nil || !managed {
@@ -86,17 +86,33 @@ func TestInstallationSnapshotRestoresExecutableAndOwnershipState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	target := filepath.Join(bin, AliasName)
+	before, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := snapshot.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Fatal("restoring an unchanged codex.pp replaced the file")
+	}
 	if _, err := Install(codexPath, newExecutable); err != nil {
 		t.Fatal(err)
 	}
 	if err := snapshot.Restore(); err != nil {
 		t.Fatal(err)
 	}
-	if _, installed, err := Installed(codexPath, oldExecutable); err != nil || !installed {
+	if _, installed, err := Installed(codexPath); err != nil || !installed {
 		t.Fatalf("restored installation = %v, err = %v", installed, err)
 	}
-	if _, installed, err := Installed(codexPath, newExecutable); err != nil || installed {
-		t.Fatalf("new installation remained active = %v, err = %v", installed, err)
+	data, err := os.ReadFile(filepath.Join(bin, AliasName))
+	if err != nil || string(data) != "old executable" {
+		t.Fatalf("restored launcher = %q, err = %v", data, err)
 	}
 }
 
@@ -131,7 +147,7 @@ func TestInstallAdoptsRunningAliasWithoutReplacingIt(t *testing.T) {
 	if string(got) != string(content) {
 		t.Fatalf("running alias was replaced: %q", got)
 	}
-	if _, ready, err := Installed(codexPath, target); err != nil || !ready {
+	if _, ready, err := Installed(codexPath); err != nil || !ready {
 		t.Fatalf("adopted alias ready = %v, err = %v", ready, err)
 	}
 }
@@ -187,7 +203,7 @@ func TestRemoveRefusesModifiedManagedAlias(t *testing.T) {
 	}
 }
 
-func TestInstallUpdatesOnlyPreviouslyManagedAlias(t *testing.T) {
+func TestInstalledLauncherRemainsReadyWhenRuntimeChanges(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv(paths.EnvHome, filepath.Join(root, "state"))
 	bin := filepath.Join(root, "bin")
@@ -206,15 +222,39 @@ func TestInstallUpdatesOnlyPreviouslyManagedAlias(t *testing.T) {
 	if err := os.WriteFile(executable, []byte("prompt-pane-v2"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := Preflight(codexPath, executable); err != nil {
-		t.Fatalf("managed update was rejected: %v", err)
-	}
-	if _, err := Install(codexPath, executable); err != nil {
-		t.Fatal(err)
+	if _, ready, err := Installed(codexPath); err != nil || !ready {
+		t.Fatalf("stable launcher ready = %v, err = %v", ready, err)
 	}
 	data, err := os.ReadFile(target)
-	if err != nil || string(data) != "prompt-pane-v2" {
-		t.Fatalf("updated alias = %q, err = %v", data, err)
+	if err != nil || string(data) != "prompt-pane-v1" {
+		t.Fatalf("stable alias = %q, err = %v", data, err)
+	}
+}
+
+func TestLegacyOwnershipStateRequiresLauncherMigration(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv(paths.EnvHome, filepath.Join(root, "state"))
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	codexPath := filepath.Join(bin, "codex.cmd")
+	target := filepath.Join(bin, AliasName)
+	if err := os.WriteFile(target, []byte("legacy launcher"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	digest, err := fileHash(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeState(state{Path: target, SHA256: digest}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ready, err := Installed(codexPath); err != nil || ready {
+		t.Fatalf("legacy launcher ready = %v, err = %v", ready, err)
+	}
+	if managed, err := Managed(codexPath); err != nil || !managed {
+		t.Fatalf("legacy launcher managed = %v, err = %v", managed, err)
 	}
 }
 

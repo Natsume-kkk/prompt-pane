@@ -4,7 +4,6 @@ param()
 $ErrorActionPreference = "Stop"
 
 $unicodeUser = -join ([char[]](0x7528, 0x6237))
-$unicodeChinese = -join ([char[]](0x4E2D, 0x6587))
 
 $installer = Join-Path $PSScriptRoot "install.ps1"
 $tokens = $null
@@ -91,30 +90,16 @@ try {
         }
     }
 
-    $source = Join-Path $temporaryRoot "source.exe"
-    $destination = Join-Path $temporaryRoot "$unicodeUser path\prompt-pane.exe"
+    $source = Join-Path $temporaryRoot "$unicodeUser path\prompt-pane.exe"
 
+    New-Item -ItemType Directory -Path (Split-Path -Parent $source) | Out-Null
     [IO.File]::WriteAllBytes($source, [byte[]](1, 2, 3, 4))
     $originalHash = Get-SHA256Hash -Path $source
-    $firstInstall = Install-Binary -Source $source -Destination $destination -ExpectedHash $originalHash
-    if ($null -eq $firstInstall -or $firstInstall -ne "") {
-        throw "First-install rollback marker is invalid."
-    }
-
-    [IO.File]::WriteAllBytes($source, [byte[]](5, 6, 7))
-    $replacementHash = Get-SHA256Hash -Path $source
-    $backup = Install-Binary -Source $source -Destination $destination -ExpectedHash $replacementHash
-    if (-not $backup -or -not (Test-Path -LiteralPath $backup -PathType Leaf)) {
-        throw "Replacement did not create a rollback copy."
-    }
-    Restore-PreviousBinary -Destination $destination -Backup $backup
-    if ((Get-SHA256Hash -Path $destination) -ne $originalHash) {
-        throw "Rollback did not restore the previous executable."
-    }
+    Assert-DownloadedBinary -Path $source -ExpectedHash $originalHash
 
     $checksumRejected = $false
     try {
-        Install-Binary -Source $source -Destination $destination -ExpectedHash ("0" * 64) | Out-Null
+        Assert-DownloadedBinary -Path $source -ExpectedHash ("0" * 64)
     } catch {
         $checksumRejected = $true
         foreach ($expected in @("does not match", "was not installed", "retry")) {
@@ -123,18 +108,12 @@ try {
             }
         }
     }
-    if (-not $checksumRejected -or (Get-SHA256Hash -Path $destination) -ne $originalHash) {
-        throw "Checksum rejection changed the installed executable."
-    }
-
-    $env:PROMPT_PANE_HOME = Join-Path $temporaryRoot "$unicodeChinese root"
-    if ((Resolve-InstallRoot) -ne [IO.Path]::GetFullPath($env:PROMPT_PANE_HOME)) {
-        throw "The custom install root was not preserved."
+    if (-not $checksumRejected -or (Get-SHA256Hash -Path $source) -ne $originalHash) {
+        throw "Checksum rejection changed the downloaded executable."
     }
 
     Write-Output "install.ps1 tests passed"
 } finally {
-    $env:PROMPT_PANE_HOME = $null
     if (Test-Path -LiteralPath $temporaryRoot) {
         Remove-Item -LiteralPath $temporaryRoot -Recurse -Force
     }

@@ -10,8 +10,13 @@ func TestSetupTransactionRollsBackChangedComponentsInReverseOrder(t *testing.T) 
 	pluginErr := errors.New("plugin restore failed")
 	var order []string
 	transaction := &setupTransaction{
-		pluginChanged: true,
-		aliasChanged:  true,
+		pluginChanged:  true,
+		aliasChanged:   true,
+		installChanged: true,
+		restoreInstall: func() error {
+			order = append(order, "install")
+			return nil
+		},
 		restoreAlias: func() error {
 			order = append(order, "alias")
 			return nil
@@ -25,7 +30,7 @@ func TestSetupTransactionRollsBackChangedComponentsInReverseOrder(t *testing.T) 
 	if !errors.Is(err, pluginErr) {
 		t.Fatalf("rollback error = %v", err)
 	}
-	if want := []string{"alias", "plugin"}; !reflect.DeepEqual(order, want) {
+	if want := []string{"install", "alias", "plugin"}; !reflect.DeepEqual(order, want) {
 		t.Fatalf("rollback order = %v, want %v", order, want)
 	}
 }

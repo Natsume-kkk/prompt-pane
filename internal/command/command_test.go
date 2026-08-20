@@ -13,6 +13,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	runtimeinstall "github.com/Natsume-kkk/prompt-pane/internal/install"
 	runcontext "github.com/Natsume-kkk/prompt-pane/internal/run"
 	"github.com/Natsume-kkk/prompt-pane/internal/setupui"
 	"github.com/Natsume-kkk/prompt-pane/internal/ui"
@@ -318,6 +319,113 @@ func TestSetupCompletionExplainsFirstPromptTrustOnlyOnFirstInstall(t *testing.T)
 	writeSetupCompletion(&refresh, false)
 	if output := refresh.String(); !strings.Contains(output, "Run `codex.pp` when ready.") || strings.Contains(output, "/hooks") || strings.Contains(output, "first prompt") {
 		t.Fatalf("refresh completion repeated first-install guidance: %q", output)
+	}
+}
+
+func TestSetupStagesNewVersionWhileWorkspaceIsActive(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows x64 is the supported target")
+	}
+	if _, err := findPowerShell(); err != nil {
+		t.Skip(err)
+	}
+	root := t.TempDir()
+	t.Setenv("PROMPT_PANE_HOME", filepath.Join(root, "Prompt Pane data"))
+	t.Setenv("CODEX_HOME", filepath.Join(root, "Codex data"))
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "codex.cmd"), []byte("@exit /b 0\r\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	oldExecutable := filepath.Join(root, "old-prompt-pane.exe")
+	if err := os.WriteFile(oldExecutable, []byte("old prompt pane"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	current, _, err := runtimeinstall.Stage(oldExecutable, "0.9.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	launcherDigest, err := runtimeinstall.InstallLauncher(oldExecutable, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := runtimeinstall.State{
+		SchemaVersion: runtimeinstall.SchemaVersion, LauncherSHA256: launcherDigest, Current: &current,
+	}
+	if err := runtimeinstall.Save(state); err != nil {
+		t.Fatal(err)
+	}
+	activity, err := runcontext.AcquireWorkspaceActivity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer activity.Close()
+
+	var output bytes.Buffer
+	app := App{In: failOnRead{t}, Out: &output, Err: &output}
+	if code := app.setupCodex(); code != 0 {
+		t.Fatalf("setup exit code = %d, output = %q", code, output.String())
+	}
+	got, err := runtimeinstall.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Current.Generation != current.Generation || got.Pending == nil || got.Pending.Generation == current.Generation {
+		t.Fatalf("staged state = %#v", got)
+	}
+	if !strings.Contains(output.String(), "is staged and verified") || !strings.Contains(output.String(), "will activate automatically") {
+		t.Fatalf("staged output = %q", output.String())
+	}
+	launcherPath, _ := runtimeinstall.LauncherPath()
+	launcherHash, err := runtimeinstall.HashFile(launcherPath)
+	if err != nil || launcherHash != launcherDigest {
+		t.Fatalf("active launcher changed: hash = %q, err = %v", launcherHash, err)
+	}
+}
+
+func TestFirstVersionedMigrationStopsBeforeStagingWhenWorkspaceIsActive(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows x64 is the supported target")
+	}
+	if _, err := findPowerShell(); err != nil {
+		t.Skip(err)
+	}
+	root := t.TempDir()
+	home := filepath.Join(root, "Prompt Pane data")
+	t.Setenv("PROMPT_PANE_HOME", home)
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "codex.cmd"), []byte("@exit /b 0\r\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	activity, err := runcontext.AcquireWorkspaceActivity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer activity.Close()
+
+	var output bytes.Buffer
+	app := App{In: failOnRead{t}, Out: &output, Err: &output}
+	if code := app.setupCodex(); code == 0 {
+		t.Fatalf("first migration unexpectedly succeeded: %q", output.String())
+	}
+	if !strings.Contains(output.String(), "close all running Prompt Pane workspaces once") {
+		t.Fatalf("first migration output = %q", output.String())
+	}
+	versions, _ := runtimeinstall.VersionsRoot()
+	launcher, _ := runtimeinstall.LauncherPath()
+	state, _ := runtimeinstall.StatePath()
+	for _, path := range []string{versions, launcher, state} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("first migration changed %s before the activity check: %v", path, err)
+		}
 	}
 }
 

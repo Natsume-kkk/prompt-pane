@@ -22,6 +22,8 @@ func TestCodexAliasPreservesInternalInvocations(t *testing.T) {
 		{"_agent", "codex", "--", "resume"},
 		{"_hook", "codex"},
 		{"_view"},
+		{"_prepare", "codex"},
+		{"_activate", "codex"},
 	} {
 		if got := invocationArgs(`C:\Users\tester\AppData\Roaming\npm\codex.pp.exe`, arguments); !reflect.DeepEqual(got, arguments) {
 			t.Fatalf("arguments = %#v, want %#v", got, arguments)

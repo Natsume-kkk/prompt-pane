@@ -14,6 +14,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	runtimeinstall "github.com/Natsume-kkk/prompt-pane/internal/install"
 	"github.com/Natsume-kkk/prompt-pane/internal/ipc"
 	"github.com/Natsume-kkk/prompt-pane/internal/provider/codex"
 	runcontext "github.com/Natsume-kkk/prompt-pane/internal/run"
@@ -75,6 +76,16 @@ func (a App) Execute(args []string) int {
 		return a.hook(args[1:])
 	case "_view":
 		return a.view()
+	case "_prepare":
+		if len(args) != 2 || args[1] != "codex" {
+			return a.usageError("invalid internal prepare invocation")
+		}
+		return a.prepareCodexLaunch()
+	case "_activate":
+		if len(args) != 2 || args[1] != "codex" {
+			return a.usageError("invalid internal activation invocation")
+		}
+		return a.activatePendingCodex()
 	default:
 		return a.usageError("unknown command")
 	}
@@ -92,21 +103,27 @@ func (a App) launchCodex(codexArgs []string) int {
 	if err != nil {
 		return a.fail("cannot locate the Prompt Pane executable")
 	}
-	gate, err := acquireUpdateGate()
+	prepared, err := runtimeinstall.PreparedCurrentExecutable(executable)
 	if err != nil {
 		return a.fail(err.Error())
 	}
-	defer gate.Close()
-	if _, err := a.ensureCodexSetup(codexPath, executable, true, acquireExclusiveWorkspace); err != nil {
-		return a.fail(err.Error())
-	}
-	activity, err := runcontext.AcquireWorkspaceActivity()
-	if err != nil {
-		return a.fail("cannot register the Prompt Pane workspace as active")
-	}
-	defer activity.Close()
-	if err := gate.Close(); err != nil {
-		return a.fail("cannot release the Prompt Pane update gate")
+	if !prepared {
+		gate, err := acquireUpdateGate()
+		if err != nil {
+			return a.fail(err.Error())
+		}
+		defer gate.Close()
+		if _, err := a.ensureCodexSetup(codexPath, executable, true, acquireExclusiveWorkspace); err != nil {
+			return a.fail(err.Error())
+		}
+		activity, err := runcontext.AcquireWorkspaceActivity()
+		if err != nil {
+			return a.fail("cannot register the Prompt Pane workspace as active")
+		}
+		defer activity.Close()
+		if err := gate.Close(); err != nil {
+			return a.fail("cannot release the Prompt Pane update gate")
+		}
 	}
 	zellijPath, err := zellij.Find()
 	if err != nil {
@@ -128,41 +145,7 @@ func (a App) launchCodex(codexArgs []string) int {
 }
 
 func (a App) setupCodex() int {
-	if err := requireWindowsX64(); err != nil {
-		return a.fail(err.Error())
-	}
-	if _, err := findPowerShell(); err != nil {
-		return a.fail(err.Error())
-	}
-	codexPath, err := exec.LookPath("codex")
-	if err != nil {
-		return a.fail("Codex CLI was not found in PATH")
-	}
-	executable, err := os.Executable()
-	if err != nil {
-		return a.fail("cannot locate the Prompt Pane executable")
-	}
-	previouslyManaged, err := shortcut.Managed(codexPath)
-	if err != nil {
-		return a.fail(err.Error())
-	}
-	gate, err := acquireUpdateGate()
-	if err != nil {
-		return a.fail(err.Error())
-	}
-	defer gate.Close()
-	changed, err := a.ensureCodexSetup(codexPath, executable, false, acquireExclusiveWorkspace)
-	if err != nil {
-		return a.fail(err.Error())
-	}
-	if !changed {
-		fmt.Fprintln(a.Out, "Managed components are already up to date. Running final checks.")
-	}
-	if code := a.checkEnvironment(true); code != 0 {
-		return code
-	}
-	writeSetupCompletion(a.Out, !previouslyManaged)
-	return 0
+	return a.setupVersionedCodex()
 }
 
 func writeSetupCompletion(out io.Writer, firstInstall bool) {
@@ -180,7 +163,7 @@ func (a App) ensureCodexSetup(codexPath, executable string, beforeLaunch bool, p
 	_, zellijErr := zellij.Find()
 	zellijReady := zellijErr == nil
 	pluginReady := codex.PluginInstalled(codexPath)
-	aliasPath, aliasReady, err := shortcut.Installed(codexPath, executable)
+	aliasPath, aliasReady, err := shortcut.Installed(codexPath)
 	if err != nil {
 		return false, err
 	}
@@ -219,7 +202,7 @@ func (a App) ensureCodexSetup(codexPath, executable string, beforeLaunch bool, p
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
-	transaction, err := captureSetupTransaction(codexPath, !pluginReady, !aliasReady)
+	transaction, err := captureSetupTransaction(codexPath, !pluginReady, !aliasReady, false)
 	if err != nil {
 		return false, fmt.Errorf("prepare installation rollback: %w", err)
 	}
@@ -301,7 +284,7 @@ func (a App) ensureCodexSetup(codexPath, executable string, beforeLaunch bool, p
 		if !codex.PluginInstalled(codexPath) {
 			return fmt.Errorf("verify Codex plugin installation")
 		}
-		if _, installed, err := shortcut.Installed(codexPath, executable); err != nil || !installed {
+		if _, installed, err := shortcut.Installed(codexPath); err != nil || !installed {
 			if err != nil {
 				return fmt.Errorf("verify codex.pp installation: %w", err)
 			}
@@ -366,6 +349,42 @@ func (a App) checkEnvironment(afterSetup bool) int {
 	} else {
 		fmt.Fprintf(a.Out, "[OK]   Prompt Pane executable: %s\n", executable)
 	}
+	installState, installStateReady, installStateErr := runtimeinstall.LoadIfPresent()
+	if installStateErr != nil {
+		fmt.Fprintf(a.Out, "[FAIL] Prompt Pane install state: %s\n", installStateErr)
+		ok = false
+	} else if !installStateReady {
+		fmt.Fprintln(a.Out, "[FAIL] Prompt Pane install state: versioned installation is not initialized")
+		ok = false
+	} else {
+		currentPath, currentPathErr := runtimeinstall.RuntimePath(*installState.Current)
+		if currentPathErr != nil || runtimeinstall.VerifyRelease(*installState.Current) != nil {
+			fmt.Fprintln(a.Out, "[FAIL] Prompt Pane current version: missing or invalid")
+			ok = false
+		} else {
+			fmt.Fprintf(a.Out, "[OK]   Prompt Pane current version: %s at %s\n", runtimeinstall.ReleaseLabel(*installState.Current), currentPath)
+		}
+		if installState.Pending != nil {
+			if err := runtimeinstall.VerifyRelease(*installState.Pending); err != nil {
+				fmt.Fprintf(a.Out, "[FAIL] Prompt Pane pending version: %s\n", err)
+				ok = false
+			} else {
+				fmt.Fprintf(a.Out, "[INFO] Prompt Pane pending version: %s; activates after all workspaces close\n", runtimeinstall.ReleaseLabel(*installState.Pending))
+			}
+		}
+		if launcherReady, err := runtimeinstall.LauncherReady(installState); err != nil {
+			fmt.Fprintf(a.Out, "[FAIL] Prompt Pane launcher: %s\n", err)
+			ok = false
+		} else if !launcherReady {
+			fmt.Fprintln(a.Out, "[FAIL] Prompt Pane launcher: missing or modified")
+			ok = false
+		} else if launcherPath, err := runtimeinstall.LauncherPath(); err != nil {
+			fmt.Fprintf(a.Out, "[FAIL] Prompt Pane launcher: %s\n", err)
+			ok = false
+		} else {
+			fmt.Fprintf(a.Out, "[OK]   Prompt Pane launcher: %s\n", launcherPath)
+		}
+	}
 	if codexPath, err := exec.LookPath("codex"); err != nil {
 		fmt.Fprintln(a.Out, "[FAIL] Codex CLI: not found")
 		ok = false
@@ -381,7 +400,7 @@ func (a App) checkEnvironment(afterSetup bool) int {
 		if executableErr != nil {
 			fmt.Fprintln(a.Out, "[FAIL] codex.pp: cannot locate the Prompt Pane executable")
 			ok = false
-		} else if path, installed, err := shortcut.Installed(codexPath, executable); err != nil {
+		} else if path, installed, err := shortcut.Installed(codexPath); err != nil {
 			fmt.Fprintf(a.Out, "[FAIL] codex.pp: %s\n", err)
 			ok = false
 		} else if !installed {

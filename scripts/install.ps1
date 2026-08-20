@@ -33,21 +33,6 @@ function Test-SupportedPowerShellVersion {
     return ($Version.Major -eq 5 -and $Version.Minor -ge 1) -or $Version.Major -ge 7
 }
 
-function Resolve-InstallRoot {
-    if ($env:PROMPT_PANE_HOME) {
-        if (-not [IO.Path]::IsPathRooted($env:PROMPT_PANE_HOME)) {
-            throw "PROMPT_PANE_HOME must be an absolute path."
-        }
-        return [IO.Path]::GetFullPath($env:PROMPT_PANE_HOME)
-    }
-
-    $applicationData = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData)
-    if (-not $applicationData) {
-        throw "Cannot locate the current user's application data directory."
-    }
-    return Join-Path $applicationData "PromptPane"
-}
-
 function Resolve-ReleaseBaseUrl {
     if ($Version -eq "latest") {
         return "https://github.com/$repository/releases/latest/download"
@@ -115,93 +100,25 @@ function Get-SHA256Hash {
     }
 }
 
-function Install-Binary {
+function Assert-DownloadedBinary {
     param(
-        [Parameter(Mandatory = $true)][string]$Source,
-        [Parameter(Mandatory = $true)][string]$Destination,
+        [Parameter(Mandatory = $true)][string]$Path,
         [Parameter(Mandatory = $true)][string]$ExpectedHash
     )
 
-    $actualHash = Get-SHA256Hash -Path $Source
+    $actualHash = Get-SHA256Hash -Path $Path
     if ($actualHash -ne $ExpectedHash) {
         throw "The downloaded Prompt Pane executable does not match the Release SHA-256. The file was not installed; retry the download and report the Release if the mismatch persists."
-    }
-
-    $destinationDirectory = Split-Path -Parent $Destination
-    try {
-        New-Item -ItemType Directory -Force -Path $destinationDirectory | Out-Null
-    } catch {
-        throw "Cannot prepare the Prompt Pane install directory $destinationDirectory. Check write permissions and available disk space. Reason: $($_.Exception.Message)"
-    }
-
-    if (Test-Path -LiteralPath $Destination -PathType Leaf) {
-        $installedHash = Get-SHA256Hash -Path $Destination
-        if ($installedHash -eq $actualHash) {
-            Write-Host "[3/4] Prompt Pane is already up to date."
-            return $null
-        }
-    }
-
-    $staged = Join-Path $destinationDirectory (".prompt-pane-{0}.tmp" -f [Guid]::NewGuid().ToString("N"))
-    $backup = Join-Path $destinationDirectory (".prompt-pane-{0}.bak" -f [Guid]::NewGuid().ToString("N"))
-    try {
-        Copy-Item -LiteralPath $Source -Destination $staged
-    } catch {
-        throw "Cannot stage Prompt Pane in $destinationDirectory. Check write permissions and available disk space. Reason: $($_.Exception.Message)"
-    }
-
-    try {
-        try {
-            if (Test-Path -LiteralPath $Destination -PathType Leaf) {
-                [IO.File]::Replace($staged, $Destination, $backup, $true)
-                return $backup
-            }
-
-            Move-Item -LiteralPath $staged -Destination $Destination
-            return ""
-        } catch {
-            throw "Cannot activate Prompt Pane at $Destination. Close running Prompt Pane processes and check write permissions, then retry. Reason: $($_.Exception.Message)"
-        }
-    } finally {
-        if (Test-Path -LiteralPath $staged) {
-            Remove-Item -LiteralPath $staged -Force
-        }
-    }
-}
-
-function Restore-PreviousBinary {
-    param(
-        [Parameter(Mandatory = $true)][string]$Destination,
-        [AllowEmptyString()][string]$Backup
-    )
-
-    if ($Backup -and (Test-Path -LiteralPath $Backup -PathType Leaf)) {
-        $discard = Join-Path (Split-Path -Parent $Destination) (".prompt-pane-{0}.discard" -f [Guid]::NewGuid().ToString("N"))
-        try {
-            [IO.File]::Replace($Backup, $Destination, $discard, $true)
-        } finally {
-            if (Test-Path -LiteralPath $discard) {
-                Remove-Item -LiteralPath $discard -Force
-            }
-        }
-        return
-    }
-
-    if ($Backup -eq "" -and (Test-Path -LiteralPath $Destination -PathType Leaf)) {
-        Remove-Item -LiteralPath $Destination -Force
     }
 }
 
 Assert-SupportedEnvironment
 
 $releaseBaseUrl = Resolve-ReleaseBaseUrl
-$installRoot = Resolve-InstallRoot
-$destination = Join-Path (Join-Path $installRoot "bin") $assetName
 $temporaryDirectory = Join-Path ([IO.Path]::GetTempPath()) ("prompt-pane-install-{0}" -f [Guid]::NewGuid().ToString("N"))
 $downloadedBinary = Join-Path $temporaryDirectory $assetName
 $downloadedChecksum = Join-Path $temporaryDirectory $checksumName
 $previousSecurityProtocol = [Net.ServicePointManager]::SecurityProtocol
-$backup = $null
 
 try {
     try {
@@ -211,39 +128,22 @@ try {
     }
     [Net.ServicePointManager]::SecurityProtocol = $previousSecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-    Write-Host "[1/4] Downloading Prompt Pane $Version..."
+    Write-Host "[1/3] Downloading Prompt Pane $Version..."
     Invoke-Download -Uri "$releaseBaseUrl/$assetName" -Destination $downloadedBinary -Artifact "Prompt Pane executable"
     Invoke-Download -Uri "$releaseBaseUrl/$checksumName" -Destination $downloadedChecksum -Artifact "Prompt Pane checksum"
 
-    Write-Host "[2/4] Verifying SHA-256..."
+    Write-Host "[2/3] Verifying SHA-256..."
     $expectedHash = Read-ExpectedHash -Path $downloadedChecksum
-    $backup = Install-Binary -Source $downloadedBinary -Destination $destination -ExpectedHash $expectedHash
-    if ($null -ne $backup) {
-        Write-Host "[3/4] Installed Prompt Pane for the current user."
-    }
+    Assert-DownloadedBinary -Path $downloadedBinary -ExpectedHash $expectedHash
 
-    Write-Host "[4/4] Configuring Codex integration..."
-    & $destination setup codex
+    Write-Host "[3/3] Installing Prompt Pane and configuring Codex integration..."
+    & $downloadedBinary setup codex
     if ($LASTEXITCODE -ne 0) {
-        throw "Prompt Pane setup failed with exit code $LASTEXITCODE. Review the preceding prompt-pane error for the failed component and corrective action."
-    }
-
-    if ($backup -and (Test-Path -LiteralPath $backup)) {
-        Remove-Item -LiteralPath $backup -Force
+        throw "Prompt Pane setup failed with exit code $LASTEXITCODE. No previously active version was replaced. Review the preceding prompt-pane error for the failed component and corrective action."
     }
 
     Write-Host ""
-    Write-Host "Installation complete. Run codex.pp to start."
-} catch {
-    $installError = $_
-    if ($null -ne $backup) {
-        try {
-            Restore-PreviousBinary -Destination $destination -Backup $backup
-        } catch {
-            Write-Warning "Could not restore the previous Prompt Pane executable: $($_.Exception.Message)"
-        }
-    }
-    throw $installError
+    Write-Host "Installer finished. Follow the Prompt Pane status above."
 } finally {
     [Net.ServicePointManager]::SecurityProtocol = $previousSecurityProtocol
     if (Test-Path -LiteralPath $temporaryDirectory) {

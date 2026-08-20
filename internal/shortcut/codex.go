@@ -15,13 +15,15 @@ import (
 )
 
 const (
-	AliasName = "codex.pp.exe"
-	stateName = "codex-launcher.json"
+	AliasName        = "codex.pp.exe"
+	stateName        = "codex-launcher.json"
+	launcherProtocol = 1
 )
 
 type state struct {
-	Path   string `json:"path"`
-	SHA256 string `json:"sha256"`
+	Path     string `json:"path"`
+	SHA256   string `json:"sha256"`
+	Protocol int    `json:"protocol,omitempty"`
 }
 
 func IsCodexAlias(invocation string) bool {
@@ -37,7 +39,7 @@ func Target(codexPath string) (string, error) {
 	return filepath.Join(filepath.Dir(path), AliasName), nil
 }
 
-func Installed(codexPath, executable string) (string, bool, error) {
+func Installed(codexPath string) (string, bool, error) {
 	target, err := Target(codexPath)
 	if err != nil {
 		return "", false, err
@@ -52,6 +54,9 @@ func Installed(codexPath, executable string) (string, bool, error) {
 	if !samePath(installed.Path, target) {
 		return target, false, nil
 	}
+	if installed.Protocol != launcherProtocol {
+		return target, false, nil
+	}
 	targetHash, err := fileHash(target)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -59,11 +64,7 @@ func Installed(codexPath, executable string) (string, bool, error) {
 		}
 		return target, false, err
 	}
-	sourceHash, err := fileHash(executable)
-	if err != nil {
-		return target, false, fmt.Errorf("inspect Prompt Pane executable: %w", err)
-	}
-	return target, targetHash == installed.SHA256 && targetHash == sourceHash, nil
+	return target, targetHash == installed.SHA256, nil
 }
 
 func Managed(codexPath string) (bool, error) {
@@ -94,7 +95,7 @@ func Install(codexPath, executable string) (string, error) {
 		return "", err
 	}
 	if samePath(target, executable) {
-		if err := writeState(state{Path: target, SHA256: sourceHash}); err != nil {
+		if err := writeState(state{Path: target, SHA256: sourceHash, Protocol: launcherProtocol}); err != nil {
 			return "", err
 		}
 		return target, nil
@@ -121,13 +122,10 @@ func Install(codexPath, executable string) (string, error) {
 	if err := os.Chmod(temporaryPath, 0o700); err != nil {
 		return "", fmt.Errorf("prepare codex.pp executable: %w", err)
 	}
-	if err := os.Remove(target); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("replace codex.pp executable: %w", err)
-	}
-	if err := os.Rename(temporaryPath, target); err != nil {
+	if err := replaceFile(temporaryPath, target); err != nil {
 		return "", fmt.Errorf("activate codex.pp executable: %w", err)
 	}
-	if err := writeState(state{Path: target, SHA256: sourceHash}); err != nil {
+	if err := writeState(state{Path: target, SHA256: sourceHash, Protocol: launcherProtocol}); err != nil {
 		_ = os.Remove(target)
 		return "", err
 	}
@@ -291,10 +289,7 @@ func writeState(installed state) error {
 	if err := os.Chmod(temporaryPath, 0o600); err != nil {
 		return fmt.Errorf("prepare codex.pp ownership state: %w", err)
 	}
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("replace codex.pp ownership state: %w", err)
-	}
-	if err := os.Rename(temporaryPath, path); err != nil {
+	if err := replaceFile(temporaryPath, path); err != nil {
 		return fmt.Errorf("activate codex.pp ownership state: %w", err)
 	}
 	return nil
