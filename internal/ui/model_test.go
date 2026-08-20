@@ -271,7 +271,7 @@ func TestHelpOwnsShortcutsAndViewerRequiresCtrlXToQuit(t *testing.T) {
 	}
 	updated, _ := model.Update(tea.KeyPressMsg{Code: 'h'})
 	model = updated.(Model)
-	if !model.showHelp || !strings.Contains(model.render(), "Ctrl+X     Close viewer pane") || !strings.Contains(model.render(), "Enter      Expand or fold") || strings.Contains(model.render(), "DblClick") || !strings.Contains(model.render(), "Esc cancel") {
+	if !model.showHelp || model.showTheme || !strings.Contains(model.render(), "Help controls") || !strings.Contains(model.render(), "Ctrl+X     Close this pane") || !strings.Contains(model.render(), "Prompt controls") || !strings.Contains(model.render(), "Enter      Expand or fold") || strings.Contains(model.render(), "DblClick") || !strings.Contains(model.render(), "Esc close") {
 		t.Fatalf("help did not expose viewer shortcuts: %q", model.render())
 	}
 	if model.selectedID != "one" || model.offset != 1 || model.following {
@@ -310,21 +310,39 @@ func TestViewerErrorsNeverRequestPaneClosure(t *testing.T) {
 	}
 }
 
-func TestHelpFooterExplainsThemeSelectionAndSavingAtResponsiveWidths(t *testing.T) {
+func TestOverlayFootersExplainPagePositionAndCurrentActions(t *testing.T) {
 	for _, test := range []struct {
 		width int
 		want  string
 	}{
-		{width: 80, want: "↑/↓ select theme · Enter save · Esc cancel"},
-		{width: 48, want: "↑/↓ theme · Enter save · Esc cancel"},
+		{width: 80, want: "↑/↓ select · Enter save · Esc cancel"},
+		{width: 48, want: "↑/↓ · Enter save · Esc cancel"},
 		{width: 32, want: "↑/↓ · Enter save"},
 		{width: 24, want: "↑/↓ Enter"},
 		{width: 20, want: "↑/↓ Enter"},
 	} {
-		model := Model{width: test.width, height: 20, noColor: true, showHelp: true, snapshot: ipc.Snapshot{State: "ready"}}
+		model := Model{width: test.width, height: 20, noColor: true, showTheme: true, themeName: theme.Mocha, snapshot: ipc.Snapshot{State: "ready"}}
+		model.beginThemePreview()
 		footer := model.renderFooter()
-		if !strings.Contains(footer, test.want) {
-			t.Fatalf("width=%d help footer did not explain theme controls: %q", test.width, footer)
+		themeLabel := "Theme 1/"
+		helpLabel := "Help 1/"
+		if test.width < 26 {
+			themeLabel = "T 1/"
+			helpLabel = "H 1/"
+		}
+		if !strings.Contains(footer, themeLabel) || !strings.Contains(footer, test.want) || strings.Contains(footer, "[READY]") {
+			t.Fatalf("width=%d theme footer did not explain its page and controls: %q", test.width, footer)
+		}
+		if ansi.StringWidth(footer) > test.width {
+			t.Fatalf("width=%d theme footer exceeded width: %q", test.width, footer)
+		}
+
+		model.showTheme = false
+		model.showHelp = true
+		model.helpOffset = 0
+		footer = model.renderFooter()
+		if !strings.Contains(footer, helpLabel) || !strings.Contains(footer, "Esc") || strings.Contains(footer, "[READY]") {
+			t.Fatalf("width=%d help footer did not explain its page and controls: %q", test.width, footer)
 		}
 		if ansi.StringWidth(footer) > test.width {
 			t.Fatalf("width=%d help footer exceeded width: %q", test.width, footer)
@@ -337,10 +355,16 @@ func TestHelpExplainsGitStatusAtResponsiveWidths(t *testing.T) {
 		model := Model{width: width, noColor: true, snapshot: ipc.Snapshot{State: "live"}}
 		lines := model.helpLines()
 		output := strings.Join(lines, "\n")
-		for _, expected := range []string{"Git status", "branch", "Tracked changes", "Added lines", "Deleted lines", "Untracked"} {
+		for _, expected := range []string{"Git status", "main*", "branch", "Tracked", "+N/-N", "Untracked"} {
 			if !strings.Contains(output, expected) {
 				t.Fatalf("width=%d help omitted Git status meaning %q: %q", width, expected, output)
 			}
+		}
+		if strings.Contains(output, "HEAD") {
+			t.Fatalf("width=%d help exposed Git implementation terminology: %q", width, output)
+		}
+		if width >= 52 && !strings.Contains(output, "Lines since last commit") {
+			t.Fatalf("width=%d help did not explain line counts in user terms: %q", width, output)
 		}
 		inGitStatus := false
 		for _, line := range lines {
@@ -368,19 +392,23 @@ func TestCompactHelpScrollsWithoutChangingPromptReadingState(t *testing.T) {
 			t.Fatalf("%dx%d help unexpectedly fit without scrolling", size[0], size[1])
 		}
 
-		sawTheme, sawPreview := false, false
+		sawAbout := false
 		for range 20 {
 			output := model.render()
-			sawTheme = sawTheme || strings.Contains(output, "dracula")
-			sawPreview = sawPreview || strings.Contains(output, "[ERROR]")
+			sawAbout = sawAbout || strings.Contains(output, "Token Tracker")
 			if model.helpOffset == model.helpMaxOffset() {
 				break
 			}
 			updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
 			model = updated.(Model)
 		}
-		if model.helpOffset == 0 || !sawTheme || !sawPreview {
-			t.Fatalf("%dx%d help did not reach themes and semantic preview: %q", size[0], size[1], model.render())
+		if model.helpOffset == 0 || !sawAbout {
+			t.Fatalf("%dx%d help did not reach About: %q", size[0], size[1], model.render())
+		}
+		page := strings.Split(model.overlayPageLabel("Help"), " ")[1]
+		parts := strings.Split(page, "/")
+		if len(parts) != 2 || parts[0] != parts[1] {
+			t.Fatalf("%dx%d help bottom did not report the final page: %q", size[0], size[1], page)
 		}
 		previousOffset := model.helpOffset
 		updated, _ = model.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
@@ -397,10 +425,29 @@ func TestCompactHelpScrollsWithoutChangingPromptReadingState(t *testing.T) {
 			t.Fatalf("%dx%d help offset was not clamped after resize: %#v", size[0], size[1], model)
 		}
 
+		updated, _ = model.Update(tea.KeyPressMsg{Code: 't'})
+		model = updated.(Model)
+		if model.showHelp || !model.showTheme || model.helpOffset != 0 {
+			t.Fatalf("%dx%d help did not switch to Theme cleanly: %#v", size[0], size[1], model)
+		}
+		sawTheme, sawPreview := false, false
+		for range 20 {
+			output := model.render()
+			sawTheme = sawTheme || strings.Contains(output, "dracula")
+			sawPreview = sawPreview || strings.Contains(output, "[ERROR]")
+			if model.helpOffset == model.helpMaxOffset() {
+				break
+			}
+			updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
+			model = updated.(Model)
+		}
+		if !sawTheme || !sawPreview {
+			t.Fatalf("%dx%d Theme did not reach its picker and preview: %q", size[0], size[1], model.render())
+		}
 		updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 		model = updated.(Model)
-		if model.showHelp || model.helpOffset != 0 {
-			t.Fatalf("%dx%d help did not close cleanly: %#v", size[0], size[1], model)
+		if model.showTheme || model.helpOffset != 0 {
+			t.Fatalf("%dx%d Theme did not close cleanly: %#v", size[0], size[1], model)
 		}
 	}
 }
@@ -425,16 +472,16 @@ func TestMouseClickSelectsVisiblePromptWithoutJumpingViewport(t *testing.T) {
 		t.Fatalf("click selection moved the viewport: selected=%q following=%v offset=%d", model.selectedID, model.following, model.offset)
 	}
 
-	model = leftClick(model, 4, 2)
+	model = leftClick(model, 4, 1)
 	if model.selectedID != "two" || model.offset != 1 {
 		t.Fatalf("click did not map the visible prompt: selected=%q offset=%d", model.selectedID, model.offset)
 	}
 
-	separatorModel := model
-	separatorModel.selectedID = "three"
-	separatorModel = leftClick(separatorModel, 4, 3)
-	if separatorModel.selectedID != "two" || separatorModel.following || separatorModel.offset != 1 {
-		t.Fatalf("blank separator did not select its preceding prompt: %#v", separatorModel)
+	adjacentModel := model
+	adjacentModel.selectedID = "two"
+	adjacentModel = leftClick(adjacentModel, 4, 2)
+	if adjacentModel.selectedID != "three" || !adjacentModel.following {
+		t.Fatalf("adjacent prompt first line mapped to the preceding prompt: %#v", adjacentModel)
 	}
 }
 
@@ -496,14 +543,14 @@ func TestMouseDragUsesExplicitColorsForWideSelection(t *testing.T) {
 	}
 }
 
-func TestHelpPreviewsAndCancelsThemeSelection(t *testing.T) {
+func TestThemePagePreviewsAndCancelsSelection(t *testing.T) {
 	model := Model{width: 48, height: 20, noColor: true, themeName: theme.Mocha, themeSource: config.ThemeConfig}
 	model.applyTheme(theme.Mocha)
-	updated, _ := model.Update(tea.KeyPressMsg{Code: 'h'})
+	updated, _ := model.Update(tea.KeyPressMsg{Code: 't'})
 	model = updated.(Model)
-	help := strings.Join(model.helpLines(), "\n")
-	if !model.showHelp || !strings.Contains(help, "mocha") || !strings.Contains(help, "■ ■ ■ ■ ■ ■ ■ ■") || strings.Contains(help, "current") || strings.Contains(help, "recommended") {
-		t.Fatalf("help did not embed theme palettes: %q", help)
+	page := strings.Join(model.themeLines(), "\n")
+	if !model.showTheme || model.showHelp || !strings.Contains(page, "mocha") || !strings.Contains(page, "■ ■ ■ ■ ■ ■ ■ ■") || strings.Contains(page, "current") || strings.Contains(page, "recommended") {
+		t.Fatalf("Theme did not expose its palettes: %q", page)
 	}
 	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	model = updated.(Model)
@@ -512,23 +559,102 @@ func TestHelpPreviewsAndCancelsThemeSelection(t *testing.T) {
 	}
 	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	model = updated.(Model)
-	if model.showHelp || model.themeName != theme.Mocha {
+	if model.showTheme || model.themeName != theme.Mocha {
 		t.Fatalf("theme cancel did not restore original: %#v", model)
 	}
 }
 
-func TestHelpResolvesAutoWithoutListingIt(t *testing.T) {
-	model := Model{width: 48, height: 20, noColor: true, themeName: theme.Auto, themeSource: config.ThemeDefault}
-	model.applyTheme(theme.Auto)
+func TestThemePageExplainsControlsWithoutCrowdingExtremeShortPane(t *testing.T) {
+	tests := []struct {
+		width           int
+		height          int
+		wantInstruction bool
+	}{
+		{width: 80, height: 20, wantInstruction: true},
+		{width: 32, height: 12, wantInstruction: true},
+		{width: 24, height: 10, wantInstruction: true},
+		{width: 20, height: 6, wantInstruction: false},
+	}
+	for _, test := range tests {
+		model := Model{width: test.width, height: test.height, noColor: true, themeName: theme.Mocha}
+		instruction := model.themeInstruction()
+		if test.wantInstruction && (!strings.Contains(instruction, "click") || !strings.Contains(instruction, "Enter")) {
+			t.Fatalf("%dx%d Theme instruction = %q", test.width, test.height, instruction)
+		}
+		if !test.wantInstruction && instruction != "" {
+			t.Fatalf("%dx%d Theme instruction crowded the short pane: %q", test.width, test.height, instruction)
+		}
+		if ansi.StringWidth(instruction) > test.width {
+			t.Fatalf("%dx%d Theme instruction exceeded width: %q", test.width, test.height, instruction)
+		}
+	}
+}
+
+func TestHelpAndThemeSwitchWithoutChangingPromptReadingState(t *testing.T) {
+	model := Model{width: 48, height: 20, noColor: true, selectedID: "one", offset: 2, themeName: theme.Mocha,
+		snapshot: ipc.Snapshot{State: "live", Prompts: []provider.UserPrompt{{ID: "one", Text: "first"}}}}
+	model.applyTheme(theme.Mocha)
 	updated, _ := model.Update(tea.KeyPressMsg{Code: 'h'})
 	model = updated.(Model)
-	output := strings.Join(model.helpLines(), "\n")
+	updated, _ = model.Update(tea.KeyPressMsg{Code: 't'})
+	model = updated.(Model)
+	if model.showHelp || !model.showTheme {
+		t.Fatalf("Help did not switch directly to Theme: %#v", model)
+	}
+	updated, _ = model.Update(tea.KeyPressMsg{Code: 'h'})
+	model = updated.(Model)
+	if !model.showHelp || model.showTheme || model.selectedID != "one" || model.offset != 2 {
+		t.Fatalf("Theme did not switch back to Help without changing prompt state: %#v", model)
+	}
+}
+
+func TestThemePickerSupportsClickWithoutTreatingDragAsClick(t *testing.T) {
+	model := Model{width: 48, height: 20, noColor: true, themeName: theme.Mocha, themeSource: config.ThemeConfig}
+	model.applyTheme(theme.Mocha)
+	updated, _ := model.Update(tea.KeyPressMsg{Code: 't'})
+	model = updated.(Model)
+	latteRow := -1
+	for index, line := range model.themeLines() {
+		if strings.Contains(ansi.Strip(line), "latte") {
+			latteRow = index - model.helpOffset
+			break
+		}
+	}
+	if latteRow < 0 || latteRow >= model.bodyHeight() {
+		t.Fatalf("latte theme row is not visible: row=%d page=%q", latteRow, model.render())
+	}
+	model = leftClick(model, 4, latteRow)
+	if model.themeName != theme.Latte || model.themeIndex != 1 || !model.showTheme {
+		t.Fatalf("click did not preview latte: %#v", model)
+	}
+
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	model = updated.(Model)
+	updated, _ = model.Update(tea.KeyPressMsg{Code: 't'})
+	model = updated.(Model)
+	updated, _ = model.Update(tea.MouseClickMsg{X: 4, Y: latteRow, Button: tea.MouseLeft})
+	model = updated.(Model)
+	updated, _ = model.Update(tea.MouseMotionMsg{X: 5, Y: latteRow, Button: tea.MouseLeft})
+	model = updated.(Model)
+	updated, _ = model.Update(tea.MouseReleaseMsg{X: 5, Y: latteRow, Button: tea.MouseLeft})
+	model = updated.(Model)
+	if model.themeName != theme.Mocha {
+		t.Fatalf("dragging theme text also changed the preview: %#v", model)
+	}
+}
+
+func TestThemePageResolvesAutoWithoutListingIt(t *testing.T) {
+	model := Model{width: 48, height: 20, noColor: true, themeName: theme.Auto, themeSource: config.ThemeDefault}
+	model.applyTheme(theme.Auto)
+	updated, _ := model.Update(tea.KeyPressMsg{Code: 't'})
+	model = updated.(Model)
+	output := strings.Join(model.themeLines(), "\n")
 	if strings.Contains(output, " auto") || model.themeName != theme.Mocha || !strings.Contains(output, "› mocha") || strings.Contains(output, "recommended") {
 		t.Fatalf("auto was not resolved to an explicit dark theme: name=%q output=%q", model.themeName, output)
 	}
 }
 
-func TestHelpThemeColumnsAndSectionColors(t *testing.T) {
+func TestHelpAndThemeUseUnifiedColumnsAndSectionColors(t *testing.T) {
 	model := Model{width: 80, height: 24, themeName: theme.Mocha, themeSource: config.ThemeConfig, snapshot: ipc.Snapshot{State: "live"}}
 	model.applyTheme(theme.Dracula)
 	updated, _ := model.Update(tea.KeyPressMsg{Code: 'h'})
@@ -536,22 +662,22 @@ func TestHelpThemeColumnsAndSectionColors(t *testing.T) {
 	lines := model.helpLines()
 
 	accent := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Resolve(theme.Dracula, false).Sapphire))
-	if !slices.Contains(lines, accent.Render(" Help")) || !slices.Contains(lines, accent.Render(" Theme")) {
+	if !slices.Contains(lines, accent.Render(" Help")) {
 		t.Fatalf("help section titles did not use the theme accent: %q", lines)
 	}
-	for _, heading := range []string{" Viewer", " Navigate", " Prompt", " Zellij defaults", " About"} {
+	for _, heading := range []string{" Help controls", " Prompt controls", " Pane controls", " About"} {
 		if !slices.Contains(lines, accent.Render(heading)) {
 			t.Fatalf("help missed grouped heading %q: %q", heading, lines)
 		}
 	}
-	if !slices.Contains(lines, helpEntry("Ctrl+X", "Close viewer pane")) {
+	if !slices.Contains(lines, helpEntry("Ctrl+X", "Close this pane")) {
 		t.Fatalf("help body did not use the normal foreground: %q", lines)
 	}
-	if output := strings.Join(lines, "\n"); strings.Contains(output, "preview · Enter save") {
-		t.Fatalf("help body repeated fixed footer actions: %q", output)
+	if output := strings.Join(lines, "\n"); strings.Contains(output, "Status preview") || strings.Contains(output, "› mocha") {
+		t.Fatalf("Help retained Theme content: %q", output)
 	}
 	plainOutput := ansi.Strip(strings.Join(lines, "\n"))
-	ordered := []string{"\n Viewer\n", "\n Navigate\n", "\n Prompt\n", "\n Theme\n", "\n Theme preview", "\n Zellij defaults\n", "\n About\n"}
+	ordered := []string{"\n Help controls\n", "\n Prompt controls\n", "\n Git status\n", "\n Pane controls\n", "\n About\n"}
 	previous := -1
 	for _, section := range ordered {
 		index := strings.Index(plainOutput, section)
@@ -563,9 +689,10 @@ func TestHelpThemeColumnsAndSectionColors(t *testing.T) {
 	for _, expected := range []string{
 		"Alt+←/→    Focus pane",
 		"Drag edge  Resize panes",
+		"Ctrl+p→f   Fullscreen focused pane",
 		"Prompt Pane v" + appversion.Current,
 		"Zellij " + zellij.Version,
-		"Themes and status based on Token Tracker",
+		"Visuals based on Token Tracker",
 		"Windows x64 · PowerShell",
 	} {
 		if !strings.Contains(plainOutput, expected) {
@@ -573,9 +700,16 @@ func TestHelpThemeColumnsAndSectionColors(t *testing.T) {
 		}
 	}
 
+	updated, _ = model.Update(tea.KeyPressMsg{Code: 't'})
+	model = updated.(Model)
+	themeLines := model.themeLines()
+	if !model.showTheme || model.showHelp || !slices.Contains(themeLines, accent.Render(" Theme")) {
+		t.Fatalf("Theme did not open independently with an accented title: %q", themeLines)
+	}
+
 	nameColumn, swatchColumn := -1, -1
 	for _, name := range theme.SelectableNames() {
-		for _, line := range lines {
+		for _, line := range themeLines {
 			plain := ansi.Strip(line)
 			nameIndex := strings.Index(plain, name)
 			swatchIndex := strings.Index(plain, "■")
@@ -596,17 +730,17 @@ func TestHelpThemeColumnsAndSectionColors(t *testing.T) {
 	if nameColumn != 3 {
 		t.Fatalf("theme names start at column %d, want shared content column 3", nameColumn)
 	}
-	shortcutLine := ansi.Strip(helpEntry("Ctrl+X", "Close viewer pane"))
+	shortcutLine := ansi.Strip(helpEntry("Ctrl+X", "Close this pane"))
 	if shortcutColumn := ansi.StringWidth(shortcutLine[:strings.Index(shortcutLine, "Ctrl+X")]); shortcutColumn != nameColumn {
 		t.Fatalf("shortcut column = %d, theme name column = %d", shortcutColumn, nameColumn)
 	}
-	descriptionColumn := ansi.StringWidth(shortcutLine[:strings.Index(shortcutLine, "Close viewer pane")])
+	descriptionColumn := ansi.StringWidth(shortcutLine[:strings.Index(shortcutLine, "Close this pane")])
 	if descriptionColumn != swatchColumn {
 		t.Fatalf("description column = %d, swatch column = %d", descriptionColumn, swatchColumn)
 	}
-	for _, content := range []string{"[LIVE]", "Custom bindings may differ", "Prompt Pane v" + appversion.Current} {
+	for _, content := range []string{"[LIVE]"} {
 		found := false
-		for _, line := range lines {
+		for _, line := range themeLines {
 			plain := ansi.Strip(line)
 			index := strings.Index(plain, content)
 			if index < 0 {
@@ -633,15 +767,23 @@ func TestHelpUnifiedGridFitsFixedSizes(t *testing.T) {
 				t.Fatalf("%dx%d help line exceeded width: %q", size[0], size[1], line)
 			}
 		}
+		model.showHelp = false
+		model.showTheme = true
+		model.beginThemePreview()
+		for _, line := range model.themeLines() {
+			if ansi.StringWidth(line) > size[0] && !strings.Contains(line, "■") {
+				t.Fatalf("%dx%d Theme line exceeded width: %q", size[0], size[1], line)
+			}
+		}
 	}
 }
 
-func TestHelpThemePickerUsesTokenTrackerSquarePalette(t *testing.T) {
+func TestThemePickerUsesTokenTrackerSquarePalette(t *testing.T) {
 	model := Model{width: 48, height: 20, themeName: theme.Mocha, themeSource: config.ThemeConfig}
 	model.applyTheme(theme.Mocha)
-	updated, _ := model.Update(tea.KeyPressMsg{Code: 'h'})
+	updated, _ := model.Update(tea.KeyPressMsg{Code: 't'})
 	model = updated.(Model)
-	output := strings.Join(model.helpLines(), "\n")
+	output := strings.Join(model.themeLines(), "\n")
 	palette := theme.Resolve(theme.Mocha, false)
 
 	selected := lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Mauve)).Render(" › mocha    ")
@@ -663,22 +805,22 @@ func TestHelpThemePickerUsesTokenTrackerSquarePalette(t *testing.T) {
 	}
 }
 
-func TestHelpSemanticPreviewUsesEveryThemeRole(t *testing.T) {
+func TestThemeSemanticPreviewUsesEveryThemeRole(t *testing.T) {
 	for _, name := range theme.Names()[1:] {
 		model := Model{width: 80, height: 24, themeName: name, themeSource: config.ThemeConfig, snapshot: ipc.Snapshot{State: "live"}}
 		model.applyTheme(name)
-		output := strings.Join(model.helpLines(), "\n")
+		output := strings.Join(model.themeLines(), "\n")
 		roles := theme.Derive(theme.Resolve(name, false))
 		styled := func(color, text string) string {
 			return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(text)
 		}
 		want := []string{
-			styled(roles.Accent, " Theme preview"),
+			styled(roles.Accent, " Status preview"),
 			styled(roles.Success, "[LIVE]"),
 			"1 Other prompt",
 			styled(roles.Accent, "2 Selected prompt"),
 			styled(roles.Accent, "↓ 3 prompts below"),
-			styled(roles.Accent, "h help"),
+			styled(roles.Accent, "h help · t theme"),
 			styled(roles.Token, "Total: 2.4M"),
 			styled(roles.Model, "Model: gpt-5.6"),
 			styled(roles.Label, "Limit:"),
@@ -695,17 +837,17 @@ func TestHelpSemanticPreviewUsesEveryThemeRole(t *testing.T) {
 				t.Fatalf("theme=%s preview missed semantic sample %q: %q", name, ansi.Strip(expected), output)
 			}
 		}
-		if lines := model.themePreviewLines(); len(lines) != 3 {
-			t.Fatalf("theme=%s preview did not keep three semantic rows: %q", name, lines)
+		if lines := model.themePreviewLines(); len(lines) < 3 {
+			t.Fatalf("theme=%s preview merged distinct semantic groups: %q", name, lines)
 		}
 	}
 }
 
-func TestHelpSavesThemeSelection(t *testing.T) {
+func TestThemePageSavesSelectionAndCloses(t *testing.T) {
 	t.Setenv(paths.EnvHome, t.TempDir())
 	model := Model{width: 48, height: 20, noColor: true, themeName: theme.Mocha, themeSource: config.ThemeConfig}
 	model.applyTheme(theme.Mocha)
-	updated, _ := model.Update(tea.KeyPressMsg{Code: 'h'})
+	updated, _ := model.Update(tea.KeyPressMsg{Code: 't'})
 	model = updated.(Model)
 	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	model = updated.(Model)
@@ -717,8 +859,8 @@ func TestHelpSavesThemeSelection(t *testing.T) {
 	updated, _ = model.Update(command())
 	model = updated.(Model)
 	name, source, err := config.LoadTheme()
-	if err != nil || name != theme.Latte || source != config.ThemeConfig || !model.showHelp || model.themeMessage != "Theme saved" {
-		t.Fatalf("saved theme = %q, source = %q, help = %v, message = %q, err = %v", name, source, model.showHelp, model.themeMessage, err)
+	if err != nil || name != theme.Latte || source != config.ThemeConfig || model.showTheme || model.showHelp || model.themeMessage != "" {
+		t.Fatalf("saved theme = %q, source = %q, help = %v, theme = %v, message = %q, err = %v", name, source, model.showHelp, model.showTheme, model.themeMessage, err)
 	}
 }
 
@@ -870,7 +1012,7 @@ func TestStatusUsesOneCompactMetricRow(t *testing.T) {
 func TestEnvironmentThemeCanPreviewButNotSave(t *testing.T) {
 	model := Model{width: 48, height: 20, noColor: true, themeName: theme.Mocha, themeSource: config.ThemeEnvironment}
 	model.applyTheme(theme.Mocha)
-	updated, _ := model.Update(tea.KeyPressMsg{Code: 'h'})
+	updated, _ := model.Update(tea.KeyPressMsg{Code: 't'})
 	model = updated.(Model)
 	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	model = updated.(Model)
@@ -881,7 +1023,7 @@ func TestEnvironmentThemeCanPreviewButNotSave(t *testing.T) {
 	}
 	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	model = updated.(Model)
-	if model.showHelp || model.themeName != theme.Mocha {
+	if model.showTheme || model.themeName != theme.Mocha {
 		t.Fatalf("environment preview was not canceled: %#v", model)
 	}
 }
@@ -894,7 +1036,7 @@ func TestEveryThemeColorsStatusIndexSelectionAndHelpAction(t *testing.T) {
 		palette := theme.Resolve(name, false)
 		state := lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Green)).Render("[LIVE]")
 		accent := lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Sapphire))
-		if !strings.Contains(output, state) || !strings.Contains(output, "  1 first") || !strings.Contains(output, accent.Render("  2 second")) || !strings.Contains(output, accent.Render("h help")) {
+		if !strings.Contains(output, state) || !strings.Contains(output, "  1 first") || !strings.Contains(output, accent.Render("  2 second")) || !strings.Contains(output, accent.Render("h help · t theme")) {
 			t.Fatalf("theme=%s roles were not shared by state, index, selection and help action: %q", name, output)
 		}
 	}
@@ -1069,7 +1211,7 @@ func TestPromptNumberColumnHasSymmetricSpacing(t *testing.T) {
 	model := Model{width: 40, height: 12, noColor: true, snapshot: ipc.Snapshot{State: "live", Prompts: []provider.UserPrompt{
 		{ID: "one", Text: "first"}, {ID: "two", Text: "second\ncontinued"},
 	}}}
-	want := []string{"  1 first", "", "  2 second", "    continued"}
+	want := []string{"  1 first", "  2 second", "    continued"}
 	got := model.bodyLines()
 	for index := range got {
 		got[index] = ansi.Strip(got[index])
@@ -1150,31 +1292,31 @@ func TestNewPromptKeepsPausedViewportAtBottom(t *testing.T) {
 }
 
 func TestScrollingMovesOnlyTheViewport(t *testing.T) {
-	prompts := make([]provider.UserPrompt, 8)
+	prompts := make([]provider.UserPrompt, 16)
 	for index := range prompts {
 		prompts[index] = provider.UserPrompt{ID: fmt.Sprintf("prompt-%d", index), Text: fmt.Sprintf("prompt-%d", index)}
 	}
 	model := Model{
-		width: 40, height: 8, noColor: true, following: true, selectedID: "prompt-7",
+		width: 40, height: 8, noColor: true, following: true, selectedID: "prompt-15",
 		snapshot: ipc.Snapshot{State: "live", Prompts: prompts},
 	}
 	model.offset = model.maxOffset()
 
 	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
 	model = updated.(Model)
-	if model.offset == model.maxOffset() || model.selectedID != "prompt-7" || model.following {
+	if model.offset == model.maxOffset() || model.selectedID != "prompt-15" || model.following {
 		t.Fatalf("PgUp changed selection or failed to pause following: %#v", model)
 	}
 	pausedOffset := model.offset
 
 	updated, _ = model.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
 	model = updated.(Model)
-	if model.offset >= pausedOffset || model.selectedID != "prompt-7" || model.following {
+	if model.offset >= pausedOffset || model.selectedID != "prompt-15" || model.following {
 		t.Fatalf("mouse wheel changed selection or failed to move the viewport: %#v", model)
 	}
 
 	model.scroll(1000)
-	if model.offset != model.maxOffset() || model.selectedID != "prompt-7" || model.following {
+	if model.offset != model.maxOffset() || model.selectedID != "prompt-15" || model.following {
 		t.Fatalf("scrolling to the bottom changed selection or resumed following: %#v", model)
 	}
 }
@@ -1207,7 +1349,7 @@ func TestViewerPagesStartAtTop(t *testing.T) {
 	updated, _ := model.Update(tea.KeyPressMsg{Code: 'h'})
 	model = updated.(Model)
 	lines = strings.Split(model.render(), "\n")
-	if strings.TrimSpace(lines[0]) != "Help" || !strings.Contains(model.render(), "Viewer") {
+	if strings.TrimSpace(lines[0]) != "Help" || !strings.Contains(model.render(), "Help controls") {
 		t.Fatalf("help page did not follow the shared grid: %q", model.render())
 	}
 
@@ -1382,7 +1524,7 @@ func TestBelowNoticeUsesLastVisiblePromptAndAlignsWithStatus(t *testing.T) {
 	model := Model{width: 48, height: 10, noColor: true, selectedID: "prompt-7", offset: 0,
 		snapshot: ipc.Snapshot{State: "live", Prompts: prompts}}
 	lines := strings.Split(model.render(), "\n")
-	if got := lines[len(lines)-3]; got != " ↓ 4 prompts below" {
+	if got := lines[len(lines)-3]; got != " ↓ 1 prompt below" {
 		t.Fatalf("below notice did not use the last visible prompt: %q", lines)
 	}
 	if !strings.HasPrefix(lines[len(lines)-3], " ") || !strings.HasPrefix(lines[len(lines)-2], " [LIVE]") {
@@ -1401,7 +1543,7 @@ func TestBelowNoticeUsesLastVisiblePromptAndAlignsWithStatus(t *testing.T) {
 func TestBelowNoticeHandlesSingularContinuationAndCompactHeight(t *testing.T) {
 	model := Model{width: 40, height: 8, noColor: true, selectedID: "two", offset: 0,
 		snapshot: ipc.Snapshot{State: "live", Metrics: &provider.SessionMetrics{TotalTokens: 100}, Prompts: []provider.UserPrompt{
-			{ID: "one", Text: numberedLines("first", 5)},
+			{ID: "one", Text: numberedLines("first", 6)},
 			{ID: "two", Text: "second"},
 		}}}
 	output := model.render()
@@ -1429,7 +1571,7 @@ func TestReadyStateRoutesTroubleshootingThroughHelp(t *testing.T) {
 
 	updated, _ := model.Update(tea.KeyPressMsg{Code: 'h'})
 	model = updated.(Model)
-	if output := model.render(); !strings.Contains(output, "Help") || !strings.Contains(output, "Connection") || !strings.Contains(output, "First prompt starts") || !strings.Contains(output, "/hooks") || !strings.Contains(output, "Review and trust it") || !strings.Contains(output, "Restart codex.pp") {
+	if output := model.render(); !strings.Contains(output, "Help") || !strings.Contains(output, "Connection") || !strings.Contains(output, "Submit your first prompt") || !strings.Contains(output, "/hooks") || !strings.Contains(output, "Trust Prompt Pane") || !strings.Contains(output, "Restart codex.pp") {
 		t.Fatalf("ready help did not explain how to confirm the connection: %q", output)
 	}
 
@@ -1447,8 +1589,8 @@ func TestReadyHelpSeparatesExplanationFromTroubleshootingSteps(t *testing.T) {
 		explanation string
 		firstStep   string
 	}{
-		{width: 20, explanation: "   If missing:", firstStep: "   1. Open /hooks."},
-		{width: 48, explanation: "   If prompt missing:", firstStep: "   1. Open /hooks."},
+		{width: 20, explanation: "   If it is missing:", firstStep: "   1. Open /hooks."},
+		{width: 48, explanation: "   If it does not appear:", firstStep: "   1. Open /hooks."},
 		{width: 80, explanation: "   If a prompt does not appear:", firstStep: "   1. Open /hooks in Codex."},
 	} {
 		model := Model{width: test.width, noColor: true, snapshot: ipc.Snapshot{State: "ready"}}
@@ -1462,8 +1604,8 @@ func TestReadyHelpSeparatesExplanationFromTroubleshootingSteps(t *testing.T) {
 				continue
 			}
 			foundExplanation = true
-			if index+2 >= len(lines) || lines[index+1] != "" || ansi.Strip(lines[index+2]) != test.firstStep {
-				t.Fatalf("width=%d troubleshooting explanation and steps were not separated: %q", test.width, lines)
+			if index+1 >= len(lines) || ansi.Strip(lines[index+1]) != test.firstStep {
+				t.Fatalf("width=%d troubleshooting explanation did not lead directly to the steps: %q", test.width, lines)
 			}
 			break
 		}

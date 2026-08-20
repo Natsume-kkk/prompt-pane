@@ -68,6 +68,7 @@ type Model struct {
 	selectedID      string
 	expanded        map[string]bool
 	showHelp        bool
+	showTheme       bool
 	helpOffset      int
 	themeName       string
 	themeSource     config.ThemeSource
@@ -131,10 +132,27 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.showHelp {
 			switch key {
 			case "h", "esc":
-				m.applyTheme(m.themeOriginal)
 				m.showHelp = false
 				m.helpOffset = 0
-				m.themeMessage = ""
+			case "t":
+				m.showHelp = false
+				m.showTheme = true
+				m.helpOffset = 0
+				m.beginThemePreview()
+			case "pgup":
+				m.scrollHelp(-m.bodyHeight())
+			case "pgdown":
+				m.scrollHelp(m.bodyHeight())
+			}
+			return m, nil
+		}
+		if m.showTheme {
+			switch key {
+			case "t", "esc":
+				m.cancelThemePreview()
+			case "h":
+				m.cancelThemePreview()
+				m.showHelp = true
 			case "up":
 				m.moveTheme(-1)
 				m.revealHelpTheme()
@@ -158,6 +176,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		switch key {
 		case "h":
 			m.showHelp = true
+			m.helpOffset = 0
+		case "t":
+			m.showTheme = true
 			m.helpOffset = 0
 			m.beginThemePreview()
 		case "up", "k":
@@ -213,13 +234,15 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.resetTextSelection()
-		if click && !m.showHelp {
+		if click && m.showTheme {
+			m.selectThemeAtRow(msg.Y)
+		} else if click && !m.showHelp {
 			m.selectPromptAtRow(msg.Y)
 		}
 	case tea.MouseWheelMsg:
 		m.resetPendingClick()
 		m.resetTextSelection()
-		if m.showHelp {
+		if m.showHelp || m.showTheme {
 			if msg.Button == tea.MouseWheelUp {
 				m.scrollHelp(-3)
 			} else if msg.Button == tea.MouseWheelDown {
@@ -261,9 +284,12 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.themeSource = config.ThemeConfig
 		m.applyTheme(msg.name)
 		m.themeOriginal = msg.name
-		m.themeMessage = "Theme saved"
+		m.themeMessage = ""
+		m.showTheme = false
+		m.helpOffset = 0
 	case themeSaveFailedMsg:
 		m.applyTheme(m.themeOriginal)
+		m.syncThemeIndex(m.themeOriginal)
 		m.themeMessage = "Could not save theme: " + msg.err.Error()
 	case streamEndedMsg:
 		m.resetPendingClick()
@@ -319,12 +345,23 @@ func (m *Model) beginThemePreview() {
 		previewName = theme.Resolve(theme.Auto, m.lightBackground).Name
 		m.applyTheme(previewName)
 	}
-	for index, name := range theme.SelectableNames() {
-		if name == previewName {
+	m.syncThemeIndex(previewName)
+}
+
+func (m *Model) syncThemeIndex(name string) {
+	for index, candidate := range theme.SelectableNames() {
+		if candidate == name {
 			m.themeIndex = index
-			break
+			return
 		}
 	}
+}
+
+func (m *Model) cancelThemePreview() {
+	m.applyTheme(m.themeOriginal)
+	m.showTheme = false
+	m.helpOffset = 0
+	m.themeMessage = ""
 }
 
 func (m *Model) moveTheme(delta int) {
@@ -336,7 +373,7 @@ func (m *Model) moveTheme(delta int) {
 
 func (m *Model) revealHelpTheme() {
 	selected := -1
-	for index, line := range m.helpLines() {
+	for index, line := range m.themeLines() {
 		if strings.Contains(ansi.Strip(line), "› "+m.themeName) {
 			selected = index
 			break
@@ -352,6 +389,28 @@ func (m *Model) revealHelpTheme() {
 		m.helpOffset = selected - height + 1
 	}
 	m.clampHelpOffset()
+}
+
+func (m *Model) selectThemeAtRow(row int) int {
+	if !m.showTheme || row < 0 || row >= m.bodyHeight() {
+		return -1
+	}
+	line := m.helpOffset + row
+	lines := m.themeLines()
+	if line < 0 || line >= len(lines) {
+		return -1
+	}
+	text := strings.TrimSpace(ansi.Strip(lines[line]))
+	for index, name := range theme.SelectableNames() {
+		if text == name || strings.HasPrefix(text, name+" ") || strings.HasPrefix(text, "› "+name) {
+			m.themeIndex = index
+			m.applyTheme(name)
+			m.themeMessage = ""
+			m.revealHelpTheme()
+			return index
+		}
+	}
+	return -1
 }
 
 func (m *Model) scroll(delta int) {
@@ -391,8 +450,19 @@ func (m *Model) clampHelpOffset() {
 }
 
 func (m Model) helpMaxOffset() int {
-	maximum := len(m.helpLines()) - m.bodyHeight()
+	maximum := len(m.overlayLines()) - m.bodyHeight()
 	return max(0, maximum)
+}
+
+func (m Model) overlayActive() bool {
+	return m.showHelp || m.showTheme
+}
+
+func (m Model) overlayLines() []string {
+	if m.showTheme {
+		return m.themeLines()
+	}
+	return m.helpLines()
 }
 
 func (m *Model) moveSelection(delta int) bool {
@@ -435,11 +505,7 @@ func (m *Model) selectPromptAtRow(row int) int {
 	layout := m.layoutBody()
 	line := m.offset + row
 	for index, prompt := range layout.prompts {
-		end := prompt.end
-		if index < len(layout.prompts)-1 {
-			end++
-		}
-		if line < prompt.start || line >= end {
+		if line < prompt.start || line >= prompt.end {
 			continue
 		}
 		if index == len(m.snapshot.Prompts)-1 {
@@ -622,7 +688,7 @@ func (m Model) maxOffset() int {
 }
 
 func (m Model) promptsBelow(bodyHeight int) (int, bool) {
-	if m.showHelp || m.following || m.width < 20 || len(m.snapshot.Prompts) == 0 {
+	if m.overlayActive() || m.following || m.width < 20 || len(m.snapshot.Prompts) == 0 {
 		return 0, false
 	}
 	layout := m.layoutBody()
@@ -634,11 +700,7 @@ func (m Model) promptsBelow(bodyHeight int) (int, bool) {
 	viewportEnd := offset + bodyHeight
 	lastVisible := -1
 	for index, prompt := range layout.prompts {
-		end := prompt.end
-		if index < len(layout.prompts)-1 {
-			end++
-		}
-		if prompt.start < viewportEnd && end > offset {
+		if prompt.start < viewportEnd && prompt.end > offset {
 			lastVisible = index
 		}
 	}
@@ -664,7 +726,7 @@ func (m Model) belowNotice() string {
 
 func (m Model) bodyHeight() int {
 	height := m.height
-	if m.showHelp {
+	if m.overlayActive() {
 		if m.height >= 3 {
 			height--
 		}
@@ -722,7 +784,7 @@ func (m Model) render() string {
 	}
 
 	lines := visible
-	if m.showHelp && m.height >= 3 {
+	if m.overlayActive() && m.height >= 3 {
 		lines = append(lines, m.renderFooter())
 	} else if m.height >= 10 {
 		lines = append(lines, m.belowNotice())
@@ -748,8 +810,8 @@ func (m Model) render() string {
 func (m Model) visibleBodyLines() []string {
 	body := m.bodyLines()
 	start := m.offset
-	if m.showHelp {
-		body = m.helpLines()
+	if m.overlayActive() {
+		body = m.overlayLines()
 		start = m.helpOffset
 	}
 	end := min(len(body), start+m.bodyHeight())
@@ -789,12 +851,23 @@ func (m Model) renderFooter() string {
 	}
 
 	actions := "h help"
-	if !m.showHelp && m.belowNotice() != "" {
-		actions = ""
-	} else if m.showHelp {
-		actions = "↑/↓ select theme · Enter save · Esc cancel"
+	if m.width >= 32 {
+		actions = "h help · t theme"
+	}
+	if m.showHelp {
+		left = " " + m.styleAction(m.overlayPageLabel("Help"))
+		actions = "PgUp/PgDn scroll · Esc close"
+		if m.width < 40 {
+			actions = "PgUp/PgDn · Esc"
+		}
+		if m.width < 26 {
+			actions = "Esc close"
+		}
+	} else if m.showTheme {
+		left = " " + m.styleAction(m.overlayPageLabel("Theme"))
+		actions = "↑/↓ select · Enter save · Esc cancel"
 		if m.width < 52 {
-			actions = "↑/↓ theme · Enter save · Esc cancel"
+			actions = "↑/↓ · Enter save · Esc cancel"
 		}
 		if m.width < 45 {
 			actions = "↑/↓ · Enter save"
@@ -802,6 +875,8 @@ func (m Model) renderFooter() string {
 		if m.width < 26 {
 			actions = "↑/↓ Enter"
 		}
+	} else if m.belowNotice() != "" {
+		actions = ""
 	} else if m.snapshot.Metrics != nil && m.height < 6 {
 		actions = m.compactMetrics()
 	}
@@ -812,6 +887,19 @@ func (m Model) renderFooter() string {
 		gap = max(0, m.width-ansi.StringWidth(left))
 	}
 	return left + strings.Repeat(" ", gap) + right
+}
+
+func (m Model) overlayPageLabel(name string) string {
+	if m.width < 26 {
+		name = name[:1]
+	}
+	height := max(1, m.bodyHeight())
+	total := max(1, (len(m.overlayLines())+height-1)/height)
+	current := min(total, m.helpOffset/height+1)
+	if m.helpOffset == m.helpMaxOffset() {
+		current = total
+	}
+	return fmt.Sprintf("%s %d/%d", name, current, total)
 }
 
 func (m Model) compactMetrics() string {
@@ -838,34 +926,29 @@ func (m Model) helpLines() []string {
 		entries = append(entries, " Connection")
 		if m.width < 32 {
 			entries = append(entries,
-				"   Hook confirms on",
-				"   first prompt.",
-				"   If missing:",
-				"",
+				"   Submit a prompt.",
+				"   If it is missing:",
 				"   1. Open /hooks.",
-				"   2. Review/trust.",
+				"   2. Trust it.",
 				"   3. Restart",
-				"   codex.pp",
+				"      codex.pp",
 				"",
 			)
 		} else if m.width < 52 {
 			entries = append(entries,
-				"   First prompt starts",
-				"   Hook confirmation.",
-				"   If prompt missing:",
-				"",
+				"   Submit your first prompt.",
+				"   If it does not appear:",
 				"   1. Open /hooks.",
-				"   2. Review and trust it.",
+				"   2. Trust Prompt Pane.",
 				"   3. Restart codex.pp",
 				"",
 			)
 		} else {
 			entries = append(entries,
-				"   Hook confirmation starts with the first prompt.",
+				"   Submit your first prompt.",
 				"   If a prompt does not appear:",
-				"",
 				"   1. Open /hooks in Codex.",
-				"   2. Review and trust Prompt Pane.",
+				"   2. Trust Prompt Pane.",
 				"   3. Restart codex.pp.",
 				"",
 			)
@@ -873,76 +956,133 @@ func (m Model) helpLines() []string {
 	}
 	if m.width < 32 {
 		entries = append(entries,
-			" Viewer",
+			" Help controls",
+			"   PgUp/PgDn Scroll",
+			"   h/Esc Close",
+			"   t Theme settings",
 			"   Ctrl+X Close pane",
-			"   h/Esc  Close help",
 			"",
-			" Navigate",
+			" Prompt controls",
+			"   Outside Help",
 			"   ↑/k    Previous",
 			"   ↓/j    Next",
-			"   PgUp   Page up",
-			"   PgDn   Page down",
+			"   PgUp/PgDn Scroll",
 			"   Home   First",
 			"   End    Latest",
-			"",
-			" Prompt",
 			"   Enter Expand/fold",
-			"   Drag   Copy text",
+			"   Drag Copy text",
 			"   c      Fold all",
 			"",
 			" Git status",
+			"   main* +N -N ?N",
 			"   branch Current",
-			"   * Tracked changes",
-			"   +N Added lines",
-			"   -N Deleted lines",
+			"   * Tracked edits",
+			"   +N/-N Lines",
 			"   ?N Untracked",
-			"      files",
+			"",
+			" Pane controls",
+			"   Alt+←/→ Focus",
+			"   Drag edge Resize",
+			"   Alt+=/- Resize",
+			"   Ctrl+p→f Full",
+			"   Custom keys vary",
 		)
 	} else {
 		entries = append(entries,
-			" Viewer",
-			helpEntry("Ctrl+X", "Close viewer pane"),
+			" Help controls",
+			helpEntry("PgUp/PgDn", "Scroll help"),
 			helpEntry("h/Esc", "Close help"),
+			helpEntry("t", "Theme settings"),
+			helpEntry("Ctrl+X", "Close this pane"),
 			"",
-			" Navigate",
+			" Prompt controls",
+			m.styleMuted("   Available outside Help"),
 			helpEntry("↑/k", "Previous prompt"),
 			helpEntry("↓/j", "Next prompt"),
-			helpEntry("PgUp/PgDn", "Scroll page"),
+			helpEntry("PgUp/PgDn", "Scroll prompt"),
 			helpEntry("Home", "First prompt"),
 			helpEntry("End", "Latest prompt"),
-			"",
-			" Prompt",
 			helpEntry("Enter", "Expand or fold"),
-			helpEntry("Drag", "Copy visible text"),
+			helpEntry("Drag", "Copy selected text"),
 			helpEntry("c", "Fold all"),
 			"",
 			" Git status",
 		)
 		if m.width < 52 {
 			entries = append(entries,
+				helpEntry("example", "main* +12 -3 ?1"),
 				helpEntry("branch", "Current branch"),
-				helpEntry("*", "Tracked changes"),
-				helpEntry("+N", "Added lines"),
-				helpEntry("-N", "Deleted lines"),
+				helpEntry("*", "Tracked edits"),
+				helpEntry("+N/-N", "Lines changed"),
 				helpEntry("?N", "Untracked files"),
 			)
 		} else {
 			entries = append(entries,
-				helpEntry("branch", "Current Git branch"),
-				helpEntry("*", "Tracked changes vs HEAD"),
-				helpEntry("+N", "Added lines vs HEAD"),
-				helpEntry("-N", "Deleted lines vs HEAD"),
+				helpEntry("example", "main* +12 -3 ?1"),
+				helpEntry("branch", "Current branch"),
+				helpEntry("*", "Tracked files changed"),
+				helpEntry("+N/-N", "Lines since last commit"),
 				helpEntry("?N", "Untracked files"),
+			)
+		}
+		entries = append(entries, "", " Pane controls",
+			helpEntry("Alt+←/→", "Focus pane"),
+			helpEntry("Drag edge", "Resize panes"),
+		)
+		if m.width < 52 {
+			entries = append(entries,
+				helpEntry("Alt+=/-", "Resize focus pane"),
+				helpEntry("Ctrl+p→f", "Fullscreen pane"),
+				m.styleMuted("   Zellij defaults"),
+				m.styleMuted("   Custom bindings may differ"),
+			)
+		} else {
+			entries = append(entries,
+				helpEntry("Alt+=/-", "Resize focused pane"),
+				helpEntry("Ctrl+p→f", "Fullscreen focused pane"),
+				m.styleMuted("   Zellij defaults; custom bindings may differ"),
 			)
 		}
 	}
 	for index, entry := range entries {
 		switch strings.TrimSpace(entry) {
-		case "Help", "Connection", "Viewer", "Navigate", "Prompt", "Git status":
+		case "Help", "Connection", "Help controls", "Prompt controls", "Git status", "Pane controls":
 			entries[index] = m.styleAction(entry)
 		}
 	}
-	entries = append(entries, "", m.styleAction(" Theme"))
+	versionLine := "   Prompt Pane v" + appversion.Current
+	if ansi.StringWidth(versionLine) > m.width {
+		versionLine = "   Prompt Pane " + appversion.Current
+	}
+	entries = append(entries, "", m.styleAction(" About"), versionLine)
+	if m.width < 32 {
+		entries = append(entries,
+			"   Windows x64",
+			"   PowerShell",
+			"   Zellij "+zellij.Version,
+			"   Token Tracker",
+		)
+	} else if m.width < 48 {
+		entries = append(entries,
+			"   Windows x64 · PowerShell",
+			"   Zellij "+zellij.Version,
+			"   Token Tracker visuals",
+		)
+	} else {
+		entries = append(entries,
+			"   Windows x64 · PowerShell · Zellij "+zellij.Version,
+			"   Visuals based on Token Tracker",
+		)
+	}
+	return entries
+}
+
+func (m Model) themeLines() []string {
+	entries := []string{m.styleAction(" Theme")}
+	if instruction := m.themeInstruction(); instruction != "" {
+		entries = append(entries, instruction)
+	}
+	entries = append(entries, "")
 	names := theme.SelectableNames()
 	nameWidth := helpLabelWidth()
 	for index, name := range names {
@@ -960,8 +1100,8 @@ func (m Model) helpLines() []string {
 		}
 		entries = append(entries, label+m.themeSwatches(name))
 	}
-	previewTitle := m.styleAction(" Theme preview")
-	if ansi.StringWidth(" Theme preview · "+m.themeName) <= m.width {
+	previewTitle := m.styleAction(" Status preview")
+	if ansi.StringWidth(" Status preview · "+m.themeName) <= m.width {
 		previewTitle += " · " + m.themeName
 	}
 	entries = append(entries, "", previewTitle)
@@ -971,53 +1111,26 @@ func (m Model) helpLines() []string {
 	} else if m.themeMessage != "" {
 		entries = append(entries, "", m.styleWarning("   "+m.themeMessage))
 	}
-	entries = append(entries, "", m.styleAction(" Zellij defaults"))
-	if m.width < 32 {
-		entries = append(entries,
-			"   Alt+←/→ Focus",
-			"   Drag edge Resize",
-			"   Alt+=/- Resize",
-			"   Ctrl+p f Full",
-			"   Custom keys vary",
-		)
-	} else {
-		entries = append(entries,
-			helpEntry("Alt+←/→", "Focus pane"),
-			helpEntry("Drag edge", "Resize panes"),
-			helpEntry("Alt+=/-", "Grow/shrink pane"),
-			helpEntry("Ctrl+p f", "Toggle fullscreen"),
-			m.styleMuted("   Custom bindings may differ"),
-		)
-	}
-	versionLine := "   Prompt Pane v" + appversion.Current
-	if ansi.StringWidth(versionLine) > m.width {
-		versionLine = "   Prompt Pane " + appversion.Current
-	}
-	entries = append(entries, "", m.styleAction(" About"), versionLine)
-	if m.width < 32 {
-		entries = append(entries,
-			"   Codex Hooks",
-			"   Zellij "+zellij.Version,
-			"   Bubble Tea TUI",
-			"   Token Tracker",
-			"   Windows x64",
-			"   PowerShell",
-		)
-	} else if m.width < 48 {
-		entries = append(entries,
-			"   Codex Hooks · Zellij "+zellij.Version,
-			"   Bubble Tea TUI",
-			"   Token Tracker visuals",
-			"   Windows x64 · PowerShell",
-		)
-	} else {
-		entries = append(entries,
-			"   Codex Hooks · Zellij "+zellij.Version+" · Bubble Tea",
-			"   Themes and status based on Token Tracker",
-			"   Windows x64 · PowerShell",
-		)
-	}
 	return entries
+}
+
+func (m Model) themeInstruction() string {
+	if m.height <= 6 {
+		return ""
+	}
+	candidates := []string{
+		"   ↑/↓ or click to preview · Enter save · Esc cancel",
+		"   ↑/↓ or click preview · Enter save · Esc cancel",
+		"   ↑/↓ or click · Enter save",
+		"   ↑/↓/click · Enter",
+		"   ↑/↓ · Enter",
+	}
+	for _, candidate := range candidates {
+		if ansi.StringWidth(candidate) <= m.width {
+			return candidate
+		}
+	}
+	return ""
 }
 
 func (m Model) themePreviewLines() []string {
@@ -1032,7 +1145,7 @@ func (m Model) themePreviewLines() []string {
 			"1 Other prompt",
 			m.styleSelected("2 Selected prompt"),
 			m.styleAction("↓ 3 prompts below"),
-			m.styleAction("h help"),
+			m.styleAction("h help · t theme"),
 		},
 		{
 			m.styleColor("Total: 2.4M", colors.Token),
@@ -1104,9 +1217,9 @@ func helpEntry(key, description string) string {
 func helpLabelWidth() int {
 	width := 0
 	for _, label := range []string{
-		"Ctrl+X", "h/Esc", "↑/k", "↓/j", "PgUp/PgDn", "Home", "End",
-		"Enter", "Drag", "c", "branch", "*", "+N", "-N", "?N",
-		"Alt+←/→", "Drag edge", "Alt+=/-", "Ctrl+p f",
+		"Ctrl+X", "h/Esc", "t", "↑/↓", "↑/k", "↓/j", "PgUp/PgDn", "Home", "End",
+		"Enter", "Drag", "c", "example", "branch", "*", "+N/-N", "?N",
+		"Alt+←/→", "Drag edge", "Alt+=/-", "Ctrl+p→f",
 	} {
 		width = max(width, ansi.StringWidth(label))
 	}
@@ -1143,8 +1256,8 @@ func (m Model) renderStatusHeader() string {
 	metrics := m.snapshot.Metrics
 	available := max(1, m.width-1)
 	right := ""
-	if m.width >= 40 {
-		right = m.styleAction("h help")
+	if m.width >= 32 {
+		right = m.styleAction("h help · t theme")
 	}
 	state := m.styleState("[" + stateLabel(m.snapshot.State) + "]")
 	total := ""
@@ -1463,9 +1576,6 @@ func (m Model) layoutBody() bodyLayout {
 	selected := m.displaySelectedIndex()
 	layout := bodyLayout{prompts: make([]promptRange, 0, len(m.snapshot.Prompts))}
 	for index, prompt := range m.snapshot.Prompts {
-		if index > 0 {
-			layout.lines = append(layout.lines, "")
-		}
 		wrapped := wrapText(sanitize(prompt.Text), textWidth)
 		isLong := len(wrapped) > collapsedLineLimit
 		summaryLine := -1

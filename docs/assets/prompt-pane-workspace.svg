@@ -87,7 +87,7 @@
     <text x="970" y="679" fill="#f38ba8" font-size="14">(main)</text>
     <text x="1027" y="679" fill="#7f849c" font-size="14">|</text>
     <text x="1045" y="679" fill="#f9e2af" font-size="14">Total: 42.8k</text>
-    <text x="1225" y="679" fill="#89b4fa" font-size="14">h help</text>
+    <text x="1155" y="679" fill="#89b4fa" font-size="14">h help · t theme</text>
 
     <text x="908" y="704" fill="#cdd6f4" font-size="13">Limit: 5h:</text>
     <rect x="994" y="691" width="58" height="16" fill="#f38ba8"/>

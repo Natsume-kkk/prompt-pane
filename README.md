@@ -11,7 +11,7 @@
 - 固定的 70/30 双栏工作区，Codex 始终在左侧获得输入焦点。
 - 提交 prompt 后，右侧实时追加原始文本，保留中文、多行、emoji 和重复提交。
 - 显示当前会话的 token、上下文、5 小时／7 天限额、模型和 Git 状态。
-- 六套内置主题，可直接在 Help 中预览和保存。
+- 六套内置主题，可按 `t` 打开 Theme 页面预览和保存。
 - prompt 只在本机处理，不建立历史数据库。
 
 ## 安装
@@ -85,7 +85,8 @@ codex.pp resume
 | 翻页 | `PgUp`／`PgDn` 或滚轮 |
 | 跳到第一条／最新一条 | `Home`／`End` |
 | 展开／折叠长 prompt | `Enter` |
-| 打开 Help 和主题设置 | `h` |
+| 打开 Help | `h` |
+| 打开主题设置 | `t` |
 | 关闭右侧 viewer | `Ctrl+X` |
 | 退出整个工作区 | 关闭终端或使用 Zellij 的 `Ctrl+Q` |
 | 复制可见文字 | 按住左键拖动，松开后复制 |
@@ -107,7 +108,7 @@ codex.pp resume
 增删数字是代码行数，不是文件数，也不是分支领先或落后的提交数。按 `h` 打开 Help 也可以查看这些符号的含义。
 
 <p align="center">
-  <img src="docs/assets/prompt-pane-themes.png" alt="Prompt Pane Help 与六套主题预览" width="420">
+  <img src="docs/assets/prompt-pane-themes.png" alt="Prompt Pane 六套主题预览" width="420">
 </p>
 
 ## 会话与隐私
