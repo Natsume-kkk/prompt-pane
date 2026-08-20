@@ -69,6 +69,49 @@ func TestUnknownCommandUsesUsageExitCode(t *testing.T) {
 	}
 }
 
+func TestExecuteValidatesPublicCommandShapes(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "setup target missing", args: []string{"setup"}, want: "usage: prompt-pane setup codex"},
+		{name: "setup target invalid", args: []string{"setup", "other"}, want: "usage: prompt-pane setup codex"},
+		{name: "teardown target missing", args: []string{"teardown"}, want: "usage: prompt-pane teardown codex"},
+		{name: "teardown target invalid", args: []string{"teardown", "other"}, want: "usage: prompt-pane teardown codex"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var output bytes.Buffer
+			app := App{In: strings.NewReader(""), Out: &output, Err: &output}
+			if code := app.Execute(test.args); code != 2 {
+				t.Fatalf("exit code = %d, want 2", code)
+			}
+			if !strings.Contains(output.String(), test.want) {
+				t.Fatalf("output = %q, want %q", output.String(), test.want)
+			}
+		})
+	}
+}
+
+func TestCommandHelpersPreserveArgumentsAndExitCodes(t *testing.T) {
+	arguments := []string{"resume", "thread"}
+	if got := trimSeparator(arguments); len(got) != 2 || got[0] != "resume" {
+		t.Fatalf("trimSeparator changed ordinary arguments: %q", got)
+	}
+	if got := trimSeparator(append([]string{"--"}, arguments...)); len(got) != 2 || got[0] != "resume" {
+		t.Fatalf("trimSeparator retained separator: %q", got)
+	}
+	if got := trimSeparator([]string{"--"}); len(got) != 0 {
+		t.Fatalf("trimSeparator returned %q, want no arguments", got)
+	}
+
+	var output bytes.Buffer
+	app := App{Err: &output}
+	if code := app.fail("failed"); code != 1 || !strings.Contains(output.String(), "prompt-pane: failed") {
+		t.Fatalf("fail() = %d, output %q", code, output.String())
+	}
+}
+
 func TestConfirmDefaultsToNo(t *testing.T) {
 	app := App{In: strings.NewReader("\n"), Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
 	if app.confirm("continue? ") {

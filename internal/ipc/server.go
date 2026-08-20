@@ -1,6 +1,7 @@
 package ipc
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
@@ -31,6 +32,8 @@ type Server struct {
 	closed    chan struct{}
 	closeOnce sync.Once
 }
+
+var snapshotBufferPool = sync.Pool{New: func() any { return new(bytes.Buffer) }}
 
 type sessionView struct {
 	state     string
@@ -299,17 +302,55 @@ func (s *Server) snapshotLocked() Snapshot {
 
 func (s *Server) broadcastLocked() {
 	snapshot := s.snapshotLocked()
-	for viewer := range s.viewers {
-		if err := writeSnapshot(viewer, snapshot); err != nil {
-			delete(s.viewers, viewer)
-			_ = viewer.Close()
+	_ = withEncodedSnapshot(snapshot, func(encoded []byte) error {
+		for viewer := range s.viewers {
+			if err := writeEncodedSnapshot(viewer, encoded); err != nil {
+				delete(s.viewers, viewer)
+				_ = viewer.Close()
+			}
 		}
-	}
+		return nil
+	})
 }
 
 func writeSnapshot(conn net.Conn, snapshot Snapshot) error {
+	return withEncodedSnapshot(snapshot, func(encoded []byte) error {
+		return writeEncodedSnapshot(conn, encoded)
+	})
+}
+
+func withEncodedSnapshot(snapshot Snapshot, consume func([]byte) error) error {
+	buffer := snapshotBufferPool.Get().(*bytes.Buffer)
+	buffer.Reset()
+	defer func() {
+		// Pooled capacity may be reused, but prompt bytes must not survive as cached content.
+		clear(buffer.Bytes())
+		buffer.Reset()
+		if buffer.Cap() <= 1<<20 {
+			snapshotBufferPool.Put(buffer)
+		}
+	}()
+	if err := json.NewEncoder(buffer).Encode(snapshot); err != nil {
+		return err
+	}
+	return consume(buffer.Bytes())
+}
+
+func writeEncodedSnapshot(conn net.Conn, encoded []byte) error {
 	_ = conn.SetWriteDeadline(time.Now().Add(time.Second))
-	err := json.NewEncoder(conn).Encode(snapshot)
+	var err error
+	for len(encoded) > 0 {
+		var written int
+		written, err = conn.Write(encoded)
+		if err != nil {
+			break
+		}
+		if written == 0 {
+			err = io.ErrShortWrite
+			break
+		}
+		encoded = encoded[written:]
+	}
 	_ = conn.SetWriteDeadline(time.Time{})
 	return err
 }

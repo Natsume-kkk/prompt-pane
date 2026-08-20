@@ -3,6 +3,7 @@ package setupui
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -324,6 +325,36 @@ func TestInitialProgressUsesTheActualStageCount(t *testing.T) {
 	model := NewModel(nil, SetupCompletion, initial)
 	if model.progress != initial || strings.Contains(model.renderStatus(), "Preparing") {
 		t.Fatalf("initial progress = %#v, status = %q", model.progress, model.renderStatus())
+	}
+}
+
+func TestPixelCanvasClipsCoordinatesAndExpandsWidePixels(t *testing.T) {
+	canvas := newPixelCanvas(4, 2)
+	setPixel(canvas, -1, 0, "wide", 1)
+	setPixel(canvas, 4, 0, "wide", 1)
+	setPixel(canvas, 1, 0, "wide", 1)
+	setPixel(canvas, 1, 0, "wide", 2)
+	if got := canvas.row(0); !slices.Equal(got, []uint8{0, 2, 2, 0}) {
+		t.Fatalf("wide row = %v", got)
+	}
+	if got := canvas.row(1); !slices.Equal(got, []uint8{0, 0, 0, 0}) {
+		t.Fatalf("untouched row = %v", got)
+	}
+}
+
+func TestAllSettledRequiresEveryActivatedParticleToFinish(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	model := Model{now: now}
+	if !model.allSettled() {
+		t.Fatal("empty particle set was not settled")
+	}
+	model.particles = []particle{{duration: time.Second}}
+	if model.allSettled() {
+		t.Fatal("inactive particle was treated as settled")
+	}
+	model.particles[0].activatedAt = now.Add(-2 * time.Second)
+	if !model.allSettled() {
+		t.Fatal("finished particle was not settled")
 	}
 }
 

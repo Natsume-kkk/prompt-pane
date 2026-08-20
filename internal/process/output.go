@@ -16,22 +16,24 @@ type OutputOptions struct {
 }
 
 func Output(ctx context.Context, path string, args []string, options OutputOptions) ([]byte, error) {
-	command := exec.CommandContext(ctx, path, args...)
+	commandContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	command := exec.CommandContext(commandContext, path, args...)
 	if options.Env != nil {
 		command.Env = options.Env
 	}
-	output := &limitedOutput{limit: options.Limit}
+	output := &limitedOutput{limit: options.Limit, onLimit: cancel}
 	command.Stdout = output
 	command.Stderr = output
 	err := command.Run()
 	if ctx.Err() != nil {
 		return output.Bytes(), ctx.Err()
 	}
-	if err != nil {
-		return output.Bytes(), err
-	}
 	if output.Truncated() {
 		return output.Bytes(), ErrOutputLimit
+	}
+	if err != nil {
+		return output.Bytes(), err
 	}
 	return output.Bytes(), nil
 }
@@ -41,6 +43,8 @@ type limitedOutput struct {
 	data      bytes.Buffer
 	limit     int
 	truncated bool
+	onLimit   func()
+	limitOnce sync.Once
 }
 
 func (o *limitedOutput) Write(data []byte) (int, error) {
@@ -52,6 +56,11 @@ func (o *limitedOutput) Write(data []byte) (int, error) {
 	}
 	if len(data) > remaining {
 		o.truncated = true
+		o.limitOnce.Do(func() {
+			if o.onLimit != nil {
+				o.onLimit()
+			}
+		})
 	}
 	return len(data), nil
 }

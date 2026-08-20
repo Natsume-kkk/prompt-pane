@@ -34,6 +34,25 @@ func TestSnapshotJSONOmitsTimestampAndAcceptsLegacyField(t *testing.T) {
 	}
 }
 
+func TestEncodeSnapshotPreservesNewlineDelimitedWireFormat(t *testing.T) {
+	snapshot := Snapshot{State: "live", Prompts: []provider.UserPrompt{{ID: "turn_1", Text: "中文 🚀"}}, Notice: "ready"}
+	var encoded []byte
+	err := withEncodedSnapshot(snapshot, func(data []byte) error {
+		encoded = append(encoded, data...)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var expected bytes.Buffer
+	if err := json.NewEncoder(&expected).Encode(snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(encoded, expected.Bytes()) {
+		t.Fatalf("encoded snapshot = %q, want %q", encoded, expected.Bytes())
+	}
+}
+
 func TestServerPublishesBoundPrompt(t *testing.T) {
 	run, err := runcontext.New()
 	if err != nil {

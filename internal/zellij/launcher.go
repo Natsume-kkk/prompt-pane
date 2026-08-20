@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	processutil "github.com/Natsume-kkk/prompt-pane/internal/process"
 	runcontext "github.com/Natsume-kkk/prompt-pane/internal/run"
@@ -78,10 +79,20 @@ func launchArguments(executable string, codexArgs []string) []string {
 }
 
 func mergeEnvironment(base, overrides []string) []string {
+	overridden := make(map[string]struct{}, len(overrides))
+	for _, entry := range overrides {
+		name, _, ok := strings.Cut(entry, "=")
+		if ok {
+			overridden[foldEnvironmentKey(name)] = struct{}{}
+		}
+	}
 	result := make([]string, 0, len(base)+len(overrides))
 	for _, entry := range base {
 		name, _, ok := strings.Cut(entry, "=")
-		if !ok || containsEnvironmentKey(overrides, name) {
+		if !ok {
+			continue
+		}
+		if _, replaced := overridden[foldEnvironmentKey(name)]; replaced {
 			continue
 		}
 		result = append(result, entry)
@@ -89,12 +100,12 @@ func mergeEnvironment(base, overrides []string) []string {
 	return append(result, overrides...)
 }
 
-func containsEnvironmentKey(environment []string, name string) bool {
-	for _, entry := range environment {
-		candidate, _, ok := strings.Cut(entry, "=")
-		if ok && strings.EqualFold(candidate, name) {
-			return true
+func foldEnvironmentKey(name string) string {
+	return strings.Map(func(value rune) rune {
+		canonical := value
+		for folded := unicode.SimpleFold(value); folded != value; folded = unicode.SimpleFold(folded) {
+			canonical = min(canonical, folded)
 		}
-	}
-	return false
+		return canonical
+	}, name)
 }

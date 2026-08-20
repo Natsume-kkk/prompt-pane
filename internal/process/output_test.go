@@ -12,12 +12,32 @@ import (
 )
 
 func TestOutputEnforcesLimitWithoutBlockingTheCommand(t *testing.T) {
-	output, err := helperOutput(t, "large", 32, time.Second)
+	started := time.Now()
+	output, err := helperOutput(t, "large", 32, 8*time.Second)
 	if !errors.Is(err, ErrOutputLimit) {
 		t.Fatalf("error = %v, want output limit", err)
 	}
 	if len(output) != 32 {
 		t.Fatalf("output length = %d, want 32", len(output))
+	}
+	if elapsed := time.Since(started); elapsed >= 5*time.Second {
+		t.Fatalf("output limit took %v to stop the command", elapsed)
+	}
+}
+
+func TestLimitedOutputSignalsLimitOnlyOnce(t *testing.T) {
+	signals := 0
+	output := &limitedOutput{limit: 3, onLimit: func() { signals++ }}
+	for _, data := range []string{"ab", "cd", "ef"} {
+		if written, err := output.Write([]byte(data)); err != nil || written != len(data) {
+			t.Fatalf("Write(%q) = %d, %v", data, written, err)
+		}
+	}
+	if got := string(output.Bytes()); got != "abc" {
+		t.Fatalf("output = %q, want abc", got)
+	}
+	if !output.Truncated() || signals != 1 {
+		t.Fatalf("truncated = %v, signals = %d", output.Truncated(), signals)
 	}
 }
 
@@ -55,6 +75,7 @@ func TestOutputHelperProcess(t *testing.T) {
 	switch os.Getenv("PROMPT_PANE_PROCESS_HELPER") {
 	case "large":
 		fmt.Print(strings.Repeat("x", 4096))
+		time.Sleep(30 * time.Second)
 		os.Exit(0)
 	case "sleep":
 		time.Sleep(2 * time.Second)

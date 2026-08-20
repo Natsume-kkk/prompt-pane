@@ -1,6 +1,7 @@
 package zellij
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -68,16 +69,31 @@ func TestClosePaneTargetsTheCurrentPane(t *testing.T) {
 
 func TestMergeEnvironmentReplacesWindowsKeysCaseInsensitively(t *testing.T) {
 	merged := mergeEnvironment(
-		[]string{"Path=old", "PROMPT_PANE_TOKEN=old", EnvExecutable + "=old", "KEEP=value"},
-		[]string{"PATH=new", "PROMPT_PANE_TOKEN=new", EnvExecutable + "=new"},
+		[]string{"Path=old", "PROMPT_PANE_TOKEN=old", EnvExecutable + "=old", "KEY=old", "KEEP=value"},
+		[]string{"PATH=new", "PROMPT_PANE_TOKEN=new", EnvExecutable + "=new", "key=new"},
 	)
 	joined := strings.Join(merged, "\n")
-	if strings.Contains(joined, "Path=old") || strings.Contains(joined, "PROMPT_PANE_TOKEN=old") || strings.Contains(joined, EnvExecutable+"=old") {
+	if strings.Contains(joined, "Path=old") || strings.Contains(joined, "PROMPT_PANE_TOKEN=old") || strings.Contains(joined, EnvExecutable+"=old") || strings.Contains(joined, "KEY=old") {
 		t.Fatalf("old values survived: %q", joined)
 	}
-	for _, expected := range []string{"PATH=new", "PROMPT_PANE_TOKEN=new", EnvExecutable + "=new", "KEEP=value"} {
+	for _, expected := range []string{"PATH=new", "PROMPT_PANE_TOKEN=new", EnvExecutable + "=new", "key=new", "KEEP=value"} {
 		if !strings.Contains(joined, expected) {
 			t.Fatalf("missing %q in %q", expected, joined)
 		}
+	}
+}
+
+func BenchmarkMergeEnvironment(b *testing.B) {
+	base := make([]string, 80)
+	for index := range base {
+		base[index] = fmt.Sprintf("BASE_%d=value", index)
+	}
+	overrides := make([]string, 20)
+	for index := range overrides {
+		overrides[index] = fmt.Sprintf("BASE_%d=override", index*3)
+	}
+	b.ReportAllocs()
+	for range b.N {
+		_ = mergeEnvironment(base, overrides)
 	}
 }

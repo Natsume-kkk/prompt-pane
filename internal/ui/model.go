@@ -688,10 +688,13 @@ func (m Model) maxOffset() int {
 }
 
 func (m Model) promptsBelow(bodyHeight int) (int, bool) {
+	return m.promptsBelowLayout(m.layoutBody(), bodyHeight)
+}
+
+func (m Model) promptsBelowLayout(layout bodyLayout, bodyHeight int) (int, bool) {
 	if m.overlayActive() || m.following || m.width < 20 || len(m.snapshot.Prompts) == 0 {
 		return 0, false
 	}
-	layout := m.layoutBody()
 	maximum := max(0, len(layout.lines)-bodyHeight)
 	offset := min(max(0, m.offset), maximum)
 	if offset >= maximum {
@@ -711,7 +714,11 @@ func (m Model) promptsBelow(bodyHeight int) (int, bool) {
 }
 
 func (m Model) belowNotice() string {
-	count, visible := m.promptsBelow(m.bodyHeight())
+	return m.belowNoticeLayout(m.layoutBody(), m.bodyHeight())
+}
+
+func (m Model) belowNoticeLayout(layout bodyLayout, bodyHeight int) string {
+	count, visible := m.promptsBelowLayout(layout, bodyHeight)
 	if !visible {
 		return ""
 	}
@@ -776,7 +783,29 @@ func (m Model) render() string {
 		return fitLines(lines, m.width, m.height)
 	}
 
-	visible := m.visibleBodyLines()
+	bodyHeight := m.bodyHeight()
+	fullStatus := []string(nil)
+	if !m.overlayActive() && m.height >= 6 {
+		fullStatus = m.renderStatusBlock(2)
+		bodyHeight = m.height - len(fullStatus)
+		if m.height >= 10 {
+			bodyHeight--
+		}
+		bodyHeight = max(1, bodyHeight)
+	}
+
+	start := m.offset
+	body := []string(nil)
+	notice := ""
+	if m.overlayActive() {
+		body = m.overlayLines()
+		start = m.helpOffset
+	} else {
+		layout := m.layoutBody()
+		body = layout.lines
+		notice = m.belowNoticeLayout(layout, bodyHeight)
+	}
+	visible := visibleLines(body, start, bodyHeight)
 	if m.textSelected || m.selecting && m.dragging {
 		for row := range visible {
 			visible[row] = m.renderTextSelection(visible[row], row)
@@ -787,19 +816,19 @@ func (m Model) render() string {
 	if m.overlayActive() && m.height >= 3 {
 		lines = append(lines, m.renderFooter())
 	} else if m.height >= 10 {
-		lines = append(lines, m.belowNotice())
-		lines = append(lines, m.renderStatusBlock(2)...)
+		lines = append(lines, notice)
+		lines = append(lines, fullStatus...)
 	} else if m.height >= 6 {
-		if notice := m.belowNotice(); notice != "" {
+		if notice != "" {
 			lines = append(lines, notice)
 			lines = append(lines, m.renderStatusBlock(1)...)
 		} else {
-			lines = append(lines, m.renderStatusBlock(2)...)
+			lines = append(lines, fullStatus...)
 		}
 	} else if m.height >= 8 {
 		lines = append(lines, "", m.renderFooter())
 	} else if m.height >= 3 {
-		if notice := m.belowNotice(); notice != "" {
+		if notice != "" {
 			lines = append(lines, notice)
 		}
 		lines = append(lines, m.renderFooter())
@@ -814,9 +843,13 @@ func (m Model) visibleBodyLines() []string {
 		body = m.overlayLines()
 		start = m.helpOffset
 	}
-	end := min(len(body), start+m.bodyHeight())
+	return visibleLines(body, start, m.bodyHeight())
+}
+
+func visibleLines(body []string, start, height int) []string {
+	end := min(len(body), start+height)
 	visible := append([]string(nil), body[start:end]...)
-	for len(visible) < m.bodyHeight() {
+	for len(visible) < height {
 		visible = append(visible, "")
 	}
 	return visible

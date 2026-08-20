@@ -390,10 +390,7 @@ func (m Model) allSettled() bool {
 }
 
 func (m Model) renderCanvas() []string {
-	canvas := make([][]uint8, m.canvasHeight())
-	for row := range canvas {
-		canvas[row] = make([]uint8, max(1, m.width))
-	}
+	canvas := newPixelCanvas(max(1, m.width), m.canvasHeight())
 	previewed := 0
 	for index, particle := range m.particles {
 		if !particle.activatedAt.IsZero() || m.done || previewed >= 3 {
@@ -414,10 +411,16 @@ func (m Model) renderCanvas() []string {
 		}
 		setPixel(canvas, particle.x, y, m.variant, state)
 	}
-	lines := make([]string, len(canvas))
-	for row := range canvas {
+	lines := make([]string, canvas.height)
+	activePixel := activeStyle(m.noColor, m.colors).Render("█")
+	settledPixel := activePixel
+	if !m.failed {
+		settledPixel = logoStyle(m.noColor, m.finalFrame, m.colors).Render("█")
+	}
+	for row := range canvas.height {
+		cells := canvas.row(row)
 		last := -1
-		for column, state := range canvas[row] {
+		for column, state := range cells {
 			if state != 0 {
 				last = column
 			}
@@ -427,16 +430,12 @@ func (m Model) renderCanvas() []string {
 			continue
 		}
 		var line strings.Builder
-		for _, state := range canvas[row][:last+1] {
+		for _, state := range cells[:last+1] {
 			switch state {
 			case 1:
-				line.WriteString(activeStyle(m.noColor, m.colors).Render("█"))
+				line.WriteString(activePixel)
 			case 2:
-				if m.failed {
-					line.WriteString(activeStyle(m.noColor, m.colors).Render("█"))
-				} else {
-					line.WriteString(logoStyle(m.noColor, m.finalFrame, m.colors).Render("█"))
-				}
+				line.WriteString(settledPixel)
 			default:
 				line.WriteByte(' ')
 			}
@@ -446,13 +445,28 @@ func (m Model) renderCanvas() []string {
 	return lines
 }
 
-func setPixel(canvas [][]uint8, x, y int, variant string, state uint8) {
-	if y < 0 || y >= len(canvas) || x < 0 || x >= len(canvas[y]) {
+type pixelCanvas struct {
+	cells         []uint8
+	width, height int
+}
+
+func newPixelCanvas(width, height int) pixelCanvas {
+	return pixelCanvas{cells: make([]uint8, width*height), width: width, height: height}
+}
+
+func (canvas pixelCanvas) row(y int) []uint8 {
+	start := y * canvas.width
+	return canvas.cells[start : start+canvas.width]
+}
+
+func setPixel(canvas pixelCanvas, x, y int, variant string, state uint8) {
+	if y < 0 || y >= canvas.height || x < 0 || x >= canvas.width {
 		return
 	}
-	canvas[y][x] = max(canvas[y][x], state)
-	if variant == "wide" && x+1 < len(canvas[y]) {
-		canvas[y][x+1] = max(canvas[y][x+1], state)
+	row := canvas.row(y)
+	row[x] = max(row[x], state)
+	if variant == "wide" && x+1 < canvas.width {
+		row[x+1] = max(row[x+1], state)
 	}
 }
 
