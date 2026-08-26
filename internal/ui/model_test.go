@@ -541,6 +541,43 @@ func TestHelpExplainsGitStatusAtResponsiveWidths(t *testing.T) {
 	}
 }
 
+func TestHelpExplainsLeftCodexDisplayRecovery(t *testing.T) {
+	for _, test := range []struct {
+		language string
+		width    int
+		want     []string
+	}{
+		{
+			language: config.InterfaceLanguageChinese,
+			width:    20,
+			want:     []string{"显示问题", "左侧错位时", "仅显示异常", "数据不受影响", "调整大小后", "滚到底部", "Ctrl+p→f 两次"},
+		},
+		{
+			language: config.InterfaceLanguageChinese,
+			width:    80,
+			want:     []string{"显示排障", "左侧 Codex 偶尔错位或断行", "会话和提示词数据不受影响", "调整窗口／窗格大小并滚到底部", "Ctrl+p→f", "自定义 Zellij 按键"},
+		},
+		{
+			language: config.InterfaceLanguageEnglish,
+			width:    20,
+			want:     []string{"Display issue", "Left pane glitch", "Display only", "Data is safe", "Resize pane", "Scroll to bottom", "Ctrl+p→f twice"},
+		},
+		{
+			language: config.InterfaceLanguageEnglish,
+			width:    80,
+			want:     []string{"Display troubleshooting", "Left Codex may occasionally misalign", "Session and prompt data are unaffected", "Resize the window or pane and scroll to bottom", "Ctrl+p→f", "Custom Zellij bindings may differ"},
+		},
+	} {
+		model := Model{width: test.width, noColor: true, interfaceLanguage: test.language, snapshot: ipc.Snapshot{State: "live"}}
+		output := strings.Join(model.helpLines(), "\n")
+		for _, expected := range test.want {
+			if !strings.Contains(output, expected) {
+				t.Fatalf("language=%s width=%d Help omitted display recovery %q: %q", test.language, test.width, expected, output)
+			}
+		}
+	}
+}
+
 func TestCompactHelpScrollsWithoutChangingPromptReadingState(t *testing.T) {
 	for _, size := range [][2]int{{20, 6}, {24, 10}} {
 		model := Model{width: size[0], height: size[1], noColor: true, following: false, selectedID: "one", offset: 1,
@@ -1068,7 +1105,7 @@ func TestInterfaceLanguageLocalizesUIAndUserFacingStatusCopy(t *testing.T) {
 	if settings := strings.Join(model.settingsLines(), "\n"); !strings.Contains(settings, "设置") || !strings.Contains(settings, "界面语言") || !strings.Contains(settings, "帮助") || !strings.Contains(settings, "关于") {
 		t.Fatalf("Chinese settings = %q", settings)
 	}
-	if help := strings.Join(model.helpLines(), "\n"); !strings.Contains(help, "连接") || !strings.Contains(help, "帮助页操作") || !strings.Contains(help, "设置页操作") || !strings.Contains(help, "窗格操作") || strings.Contains(help, "Help controls") {
+	if help := strings.Join(model.helpLines(), "\n"); !strings.Contains(help, "连接") || !strings.Contains(help, "帮助页操作") || !strings.Contains(help, "设置页操作") || !strings.Contains(help, "窗格操作") || !strings.Contains(help, "显示排障") || strings.Contains(help, "Help controls") {
 		t.Fatalf("Chinese help = %q", help)
 	}
 	if about := strings.Join(model.aboutLines(), "\n"); !strings.Contains(about, "关于") || !strings.Contains(about, "支持环境") || !strings.Contains(about, "视觉参考") || !strings.Contains(about, "PowerShell 5.1/7") || !strings.Contains(about, "Codex CLI") {
@@ -1190,7 +1227,7 @@ func TestHelpAboutAndThemeUseUnifiedColumnsAndSectionColors(t *testing.T) {
 	if len(lines) == 0 || ansi.Strip(lines[0]) != " Help controls" {
 		t.Fatalf("help did not start directly with its first section: %q", lines)
 	}
-	for _, heading := range []string{" Help controls", " Settings controls", " Prompt controls · outside Help", " Metrics", " Pane controls"} {
+	for _, heading := range []string{" Help controls", " Settings controls", " Prompt controls · outside Help", " Metrics", " Pane controls", " Display troubleshooting"} {
 		if !slices.Contains(lines, accent.Render(heading)) {
 			t.Fatalf("help missed grouped heading %q: %q", heading, lines)
 		}
@@ -1202,7 +1239,7 @@ func TestHelpAboutAndThemeUseUnifiedColumnsAndSectionColors(t *testing.T) {
 		t.Fatalf("Help retained Theme content: %q", output)
 	}
 	plainOutput := ansi.Strip(strings.Join(lines, "\n"))
-	ordered := []string{" Help controls\n", "\n Settings controls\n", "\n Prompt controls · outside Help\n", "\n Metrics\n", "\n Git status\n", "\n Pane controls\n"}
+	ordered := []string{" Help controls\n", "\n Settings controls\n", "\n Prompt controls · outside Help\n", "\n Metrics\n", "\n Git status\n", "\n Pane controls\n", "\n Display troubleshooting\n"}
 	previous := -1
 	for _, section := range ordered {
 		index := strings.Index(plainOutput, section)
@@ -1215,6 +1252,8 @@ func TestHelpAboutAndThemeUseUnifiedColumnsAndSectionColors(t *testing.T) {
 		"Alt+←/→    Focus pane",
 		"Drag edge  Resize panes",
 		"Ctrl+p→f   Fullscreen focused pane",
+		"Left Codex may occasionally misalign",
+		"Session and prompt data are unaffected.",
 	} {
 		if !strings.Contains(plainOutput, expected) {
 			t.Fatalf("help missed compact workspace/about text %q: %q", expected, plainOutput)

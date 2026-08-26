@@ -1244,6 +1244,7 @@ func (m Model) helpLines() []string {
 	metricsHeading := m.uiText(" 指标说明", " Metrics")
 	gitHeading := m.uiText(" Git 状态", " Git status")
 	paneHeading := m.uiText(" 窗格操作", " Pane controls")
+	displayHeading := m.uiText(" 显示排障", " Display troubleshooting")
 	helpScrollAction := m.uiText("整页滚动帮助", "Scroll help by page")
 	settingsEnterAction := m.uiText("打开页面或切换语言", "Open page or switch language")
 	settingsCloseAction := m.uiText("关闭设置", "Close settings")
@@ -1254,6 +1255,7 @@ func (m Model) helpLines() []string {
 	}
 	if m.width < 24 {
 		promptControlsHeading = m.uiText(" 提示词 · 页外", " Prompt · outside")
+		displayHeading = m.uiText(" 显示问题", " Display issue")
 	} else if m.width < 32 {
 		promptControlsHeading = m.uiText(" 提示词 · 帮助页外", " Prompt · outside Help")
 	}
@@ -1409,6 +1411,41 @@ func (m Model) helpLines() []string {
 			)
 		}
 	}
+	entries = append(entries, "", displayHeading)
+	switch {
+	case m.width < 24:
+		entries = append(entries,
+			m.uiText("   左侧错位时", "   Left pane glitch"),
+			m.uiText("   仅显示异常", "   Display only"),
+			m.uiText("   数据不受影响", "   Data is safe"),
+			m.uiText("   调整大小后", "   Resize pane"),
+			m.uiText("   滚到底部", "   Scroll to bottom"),
+			m.uiText("   Ctrl+p→f 两次", "   Ctrl+p→f twice"),
+		)
+	case m.width < 32:
+		entries = append(entries,
+			m.uiText("   左侧 Codex 偶尔错位", "   Left Codex glitch"),
+			m.uiText("   仅为显示重排", "   Display reflow only"),
+			m.uiText("   会话和提示词不受影响", "   Session data is safe"),
+			m.uiText("   调整大小并滚到底部", "   Resize, scroll bottom"),
+			m.uiText("   Ctrl+p→f 切换两次", "   Ctrl+p→f twice"),
+		)
+	case m.width < 52:
+		entries = append(entries,
+			m.uiText("   左侧 Codex 错位或断行", "   Left Codex may misalign"),
+			m.uiText("   这是显示重排，不影响数据", "   Display reflow; data is safe"),
+			m.uiText("   调整大小后滚到底部", "   Resize, then scroll to bottom"),
+			m.uiText("   或 Ctrl+p→f 切换两次", "   Or Ctrl+p→f twice"),
+		)
+	default:
+		entries = append(entries,
+			m.uiText("   左侧 Codex 偶尔错位或断行，是显示重排问题。", "   Left Codex may occasionally misalign due to display reflow."),
+			m.uiText("   会话和提示词数据不受影响。", "   Session and prompt data are unaffected."),
+			m.uiText("   调整窗口／窗格大小并滚到底部，", "   Resize the window or pane and scroll to bottom,"),
+			m.uiText("   或用 Ctrl+p→f 切换全屏后再切回。", "   or toggle fullscreen twice with Ctrl+p→f."),
+			m.styleMuted(m.uiText("   自定义 Zellij 按键时以实际绑定为准", "   Custom Zellij bindings may differ")),
+		)
+	}
 	headings := map[string]struct{}{
 		strings.TrimSpace(connectionHeading):       {},
 		strings.TrimSpace(helpControlsHeading):     {},
@@ -1417,6 +1454,7 @@ func (m Model) helpLines() []string {
 		strings.TrimSpace(metricsHeading):          {},
 		strings.TrimSpace(gitHeading):              {},
 		strings.TrimSpace(paneHeading):             {},
+		strings.TrimSpace(displayHeading):          {},
 	}
 	for index, entry := range entries {
 		if _, heading := headings[strings.TrimSpace(entry)]; heading {
