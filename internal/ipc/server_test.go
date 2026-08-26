@@ -53,6 +53,20 @@ func TestEncodeSnapshotPreservesNewlineDelimitedWireFormat(t *testing.T) {
 	}
 }
 
+func TestRecycledSnapshotBufferClearsReusableCapacity(t *testing.T) {
+	buffer := bytes.NewBuffer(make([]byte, 0, 128))
+	buffer.WriteString("synthetic secret prompt")
+	buffer.Reset()
+	buffer.WriteString("short")
+
+	recycleSnapshotBuffer(buffer)
+	for index, value := range buffer.Bytes()[:buffer.Cap()] {
+		if value != 0 {
+			t.Fatalf("recycled snapshot byte %d was not cleared", index)
+		}
+	}
+}
+
 func TestServerPublishesBoundPrompt(t *testing.T) {
 	run, err := runcontext.New()
 	if err != nil {
@@ -233,10 +247,23 @@ func TestMetricsFollowSessionResetRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := NewServer(run)
-	metrics := &provider.SessionMetrics{Model: "gpt-5.4", TotalTokens: 100}
+	metrics := &provider.SessionMetrics{
+		Model: "gpt-5.4", TotalTokens: 100, QuotaStatus: provider.QuotaAvailable,
+		Quotas: []provider.QuotaWindow{{WindowMinutes: 10080, UsedPercent: 17}},
+	}
 	server.apply(provider.Event{Kind: provider.SessionStarted, SessionID: "one", Source: provider.SessionSourceStartup})
-	if !server.apply(provider.Event{Kind: provider.MetricsUpdated, SessionID: "one", Metrics: metrics}) || server.snapshotLocked().Metrics == nil {
+	server.apply(provider.Event{Kind: provider.PromptSubmitted, SessionID: "one", Prompt: &provider.UserPrompt{ID: "turn-one", Text: "one"}})
+	if !server.apply(provider.Event{Kind: provider.TurnCompleted, SessionID: "one", TurnID: "turn-one", Metrics: metrics}) || server.snapshotLocked().Metrics == nil {
 		t.Fatal("current-session metrics were not accepted")
+	}
+	metrics.Quotas[0].UsedPercent = 99
+	snapshot := server.snapshotLocked()
+	if snapshot.Metrics.Quotas[0].UsedPercent != 17 {
+		t.Fatalf("server retained caller-owned quota slice: %#v", snapshot.Metrics.Quotas)
+	}
+	snapshot.Metrics.Quotas[0].UsedPercent = 88
+	if server.snapshotLocked().Metrics.Quotas[0].UsedPercent != 17 {
+		t.Fatal("snapshot exposed server-owned quota slice")
 	}
 	server.apply(provider.Event{Kind: provider.SessionStarted, SessionID: "one", Source: provider.SessionSourceCompact})
 	if server.snapshotLocked().Metrics == nil {
@@ -246,8 +273,87 @@ func TestMetricsFollowSessionResetRules(t *testing.T) {
 	if server.snapshotLocked().Metrics != nil {
 		t.Fatal("resume retained old metrics")
 	}
-	if !server.apply(provider.Event{Kind: provider.MetricsUpdated, SessionID: "one", Metrics: metrics}) || server.snapshotLocked().Metrics != nil {
+	if !server.apply(provider.Event{Kind: provider.TurnCompleted, SessionID: "one", TurnID: "turn-one", Metrics: metrics}) || server.snapshotLocked().Metrics != nil {
 		t.Fatal("stale metrics changed the active snapshot")
+	}
+}
+
+func TestTurnCompletionRequiresExactActiveTurn(t *testing.T) {
+	run, err := runcontext.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(run)
+	server.apply(provider.Event{Kind: provider.SessionStarted, SessionID: "one", Source: provider.SessionSourceStartup})
+	server.apply(provider.Event{Kind: provider.PromptSubmitted, SessionID: "one", Prompt: &provider.UserPrompt{ID: "turn-1", Text: "first"}})
+	if snapshot := server.snapshotLocked(); snapshot.ActiveTurnID != "turn-1" {
+		t.Fatalf("submitted turn was not active: %#v", snapshot)
+	}
+	server.apply(provider.Event{Kind: provider.TurnCompleted, SessionID: "one", TurnID: "old"})
+	if snapshot := server.snapshotLocked(); snapshot.ActiveTurnID != "turn-1" {
+		t.Fatalf("mismatched completion cleared active turn: %#v", snapshot)
+	}
+	server.apply(provider.Event{Kind: provider.PromptSubmitted, SessionID: "one", Prompt: &provider.UserPrompt{ID: "turn-2", Text: "second"}})
+	server.apply(provider.Event{Kind: provider.TurnCompleted, SessionID: "one", TurnID: "turn-1", Metrics: &provider.SessionMetrics{TotalTokens: 10}})
+	if snapshot := server.snapshotLocked(); snapshot.ActiveTurnID != "turn-2" || snapshot.Metrics != nil {
+		t.Fatalf("late completion changed new turn: %#v", snapshot)
+	}
+	server.apply(provider.Event{Kind: provider.TurnCompleted, SessionID: "one", TurnID: "turn-2"})
+	if snapshot := server.snapshotLocked(); snapshot.ActiveTurnID != "" {
+		t.Fatalf("matching completion did not clear active turn: %#v", snapshot)
+	}
+}
+
+func TestSameTurnSubmissionsRemainDistinctAndMoveActivePrompt(t *testing.T) {
+	run, err := runcontext.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(run)
+	server.apply(provider.Event{Kind: provider.SessionStarted, SessionID: "one", Source: provider.SessionSourceStartup})
+	server.apply(provider.Event{
+		Kind: provider.PromptSubmitted, SessionID: "one", TurnID: "turn-shared",
+		Prompt: &provider.UserPrompt{ID: "turn-shared", Text: "first"},
+	})
+	first := server.snapshotLocked()
+	server.apply(provider.Event{
+		Kind: provider.PromptSubmitted, SessionID: "one", TurnID: "turn-shared",
+		Prompt: &provider.UserPrompt{ID: "turn-shared", Text: "second"},
+	})
+	second := server.snapshotLocked()
+	if len(second.Prompts) != 2 || second.Prompts[0].Text != "first" || second.Prompts[1].Text != "second" {
+		t.Fatalf("same-turn prompts were not preserved: %#v", second)
+	}
+	if first.ActivePromptID == "" || second.ActivePromptID == "" || first.ActivePromptID == second.ActivePromptID || second.Prompts[1].ID != second.ActivePromptID {
+		t.Fatalf("prompt identities were not split from the turn: first=%#v second=%#v", first, second)
+	}
+	if second.ActiveTurnID != "turn-shared" {
+		t.Fatalf("provider turn changed across submissions: %#v", second)
+	}
+	server.apply(provider.Event{Kind: provider.TurnCompleted, SessionID: "one", TurnID: "turn-shared"})
+	completed := server.snapshotLocked()
+	if completed.ActiveTurnID != "" || completed.ActivePromptID != "" || len(completed.Prompts) != 2 {
+		t.Fatalf("turn completion did not preserve prompts and clear activity: %#v", completed)
+	}
+}
+
+func TestParentCompletionDuringSideChatUpdatesOnlyStoredParent(t *testing.T) {
+	run, err := runcontext.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(run)
+	server.apply(provider.Event{Kind: provider.SessionStarted, SessionID: "parent", Source: provider.SessionSourceStartup})
+	server.apply(provider.Event{Kind: provider.PromptSubmitted, SessionID: "parent", Prompt: &provider.UserPrompt{ID: "parent-turn", Text: "parent"}})
+	server.apply(provider.Event{Kind: provider.SessionStarted, SessionID: "side", Source: provider.SessionSourceStartup, Ephemeral: true})
+	server.apply(provider.Event{Kind: provider.PromptSubmitted, SessionID: "side", Prompt: &provider.UserPrompt{ID: "side-turn", Text: "side"}})
+	server.apply(provider.Event{Kind: provider.TurnCompleted, SessionID: "parent", TurnID: "parent-turn", Metrics: &provider.SessionMetrics{TotalTokens: 42}})
+	if snapshot := server.snapshotLocked(); snapshot.ActiveTurnID != "side-turn" || snapshot.Metrics != nil {
+		t.Fatalf("parent completion changed side snapshot: %#v", snapshot)
+	}
+	server.apply(provider.Event{Kind: provider.SessionEnded, SessionID: "side"})
+	if snapshot := server.snapshotLocked(); snapshot.ActiveTurnID != "" || snapshot.Metrics == nil || snapshot.Metrics.TotalTokens != 42 {
+		t.Fatalf("restored parent did not retain completion: %#v", snapshot)
 	}
 }
 
@@ -261,15 +367,15 @@ func TestSideChatRestoresParentOnNextPromptAndKeepsMetrics(t *testing.T) {
 	sideMetrics := &provider.SessionMetrics{Model: "gpt-5.6-luna", TotalTokens: 12}
 	if !server.apply(provider.Event{Kind: provider.SessionStarted, SessionID: "parent", Source: provider.SessionSourceStartup}) ||
 		!server.apply(provider.Event{Kind: provider.PromptSubmitted, SessionID: "parent", Prompt: &provider.UserPrompt{ID: "parent-1", Text: "before side"}}) ||
-		!server.apply(provider.Event{Kind: provider.MetricsUpdated, SessionID: "parent", Metrics: parentMetrics}) ||
-		!server.apply(provider.Event{Kind: provider.SessionStarted, SessionID: "side", Source: provider.SessionSourceStartup}) {
+		!server.apply(provider.Event{Kind: provider.TurnCompleted, SessionID: "parent", TurnID: "parent-1", Metrics: parentMetrics}) ||
+		!server.apply(provider.Event{Kind: provider.SessionStarted, SessionID: "side", Source: provider.SessionSourceStartup, Ephemeral: true}) {
 		t.Fatal("side chat setup was rejected")
 	}
 	if snapshot := server.snapshotLocked(); len(snapshot.Prompts) != 0 || snapshot.Metrics == nil || snapshot.Metrics.TotalTokens != 120 {
 		t.Fatalf("side chat did not inherit parent metrics: %#v", snapshot)
 	}
 	if !server.apply(provider.Event{Kind: provider.PromptSubmitted, SessionID: "side", Prompt: &provider.UserPrompt{ID: "side-1", Text: "temporary"}}) ||
-		!server.apply(provider.Event{Kind: provider.MetricsUpdated, SessionID: "side", Metrics: sideMetrics}) {
+		!server.apply(provider.Event{Kind: provider.TurnCompleted, SessionID: "side", TurnID: "side-1", Metrics: sideMetrics}) {
 		t.Fatal("side chat events were rejected")
 	}
 	if snapshot := server.snapshotLocked(); len(snapshot.Prompts) != 1 || snapshot.Prompts[0].Text != "temporary" || snapshot.Metrics == nil || snapshot.Metrics.TotalTokens != 120 {
@@ -297,7 +403,7 @@ func TestSideChatSessionEndRestoresParentImmediately(t *testing.T) {
 	server := NewServer(run)
 	if !server.apply(provider.Event{Kind: provider.SessionStarted, SessionID: "parent", Source: provider.SessionSourceStartup}) ||
 		!server.apply(provider.Event{Kind: provider.PromptSubmitted, SessionID: "parent", Prompt: &provider.UserPrompt{ID: "parent-1", Text: "parent"}}) ||
-		!server.apply(provider.Event{Kind: provider.SessionStarted, SessionID: "side", Source: provider.SessionSourceStartup}) ||
+		!server.apply(provider.Event{Kind: provider.SessionStarted, SessionID: "side", Source: provider.SessionSourceStartup, Ephemeral: true}) ||
 		!server.apply(provider.Event{Kind: provider.PromptSubmitted, SessionID: "side", Prompt: &provider.UserPrompt{ID: "side-1", Text: "side"}}) ||
 		!server.apply(provider.Event{Kind: provider.SessionEnded, SessionID: "side"}) {
 		t.Fatal("side chat end sequence was rejected")
@@ -478,6 +584,23 @@ func TestUnknownSessionEventsAreRejected(t *testing.T) {
 	}
 }
 
+func TestPromptSubmissionRequiresTurnAndText(t *testing.T) {
+	run, err := runcontext.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(run)
+	server.apply(provider.Event{Kind: provider.SessionStarted, SessionID: "current", Source: provider.SessionSourceStartup})
+	for _, event := range []provider.Event{
+		{Kind: provider.PromptSubmitted, SessionID: "current", Prompt: &provider.UserPrompt{Text: "missing turn"}},
+		{Kind: provider.PromptSubmitted, SessionID: "current", TurnID: "turn", Prompt: &provider.UserPrompt{}},
+	} {
+		if server.apply(event) {
+			t.Fatalf("invalid prompt event was accepted: %#v", event)
+		}
+	}
+}
+
 func TestDifferentStartupAfterSessionEndClearsAndRebinds(t *testing.T) {
 	run, err := runcontext.New()
 	if err != nil {
@@ -507,7 +630,31 @@ func TestDifferentStartupAfterSessionEndClearsAndRebinds(t *testing.T) {
 	}
 }
 
-func TestRepeatedStartupForSameSessionPreservesPrompts(t *testing.T) {
+func TestPersistentStartupWhileLiveClearsAndRebindsMainSession(t *testing.T) {
+	run, err := runcontext.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(run)
+	if !server.apply(provider.Event{Kind: provider.SessionStarted, SessionID: "first", Source: provider.SessionSourceStartup}) ||
+		!server.apply(provider.Event{Kind: provider.PromptSubmitted, SessionID: "first", TurnID: "first-turn", Prompt: &provider.UserPrompt{Text: "old"}}) ||
+		!server.apply(provider.Event{Kind: provider.TurnCompleted, SessionID: "first", TurnID: "first-turn", Metrics: &provider.SessionMetrics{TotalTokens: 8}}) ||
+		!server.apply(provider.Event{Kind: provider.SessionStarted, SessionID: "second", Source: provider.SessionSourceStartup}) {
+		t.Fatal("persistent startup sequence was rejected")
+	}
+	snapshot := server.snapshotLocked()
+	if snapshot.State != "live" || len(snapshot.Prompts) != 0 || snapshot.Metrics != nil || snapshot.Notice != "New session started. Showing new prompts only." {
+		t.Fatalf("persistent startup was treated as a side overlay: %#v", snapshot)
+	}
+	if !server.apply(provider.Event{Kind: provider.PromptSubmitted, SessionID: "second", TurnID: "second-turn", Prompt: &provider.UserPrompt{Text: "new"}}) {
+		t.Fatal("new main-session prompt was rejected")
+	}
+	if snapshot = server.snapshotLocked(); len(snapshot.Prompts) != 1 || snapshot.Prompts[0].Text != "new" {
+		t.Fatalf("new main-session prompt was not isolated: %#v", snapshot)
+	}
+}
+
+func TestRepeatedStartupForSameSessionPreservesAllSubmissions(t *testing.T) {
 	run, err := runcontext.New()
 	if err != nil {
 		t.Fatal(err)
@@ -519,7 +666,7 @@ func TestRepeatedStartupForSameSessionPreservesPrompts(t *testing.T) {
 		!server.apply(provider.Event{Kind: provider.PromptSubmitted, SessionID: "same", Prompt: &provider.UserPrompt{ID: "turn", Text: "duplicate"}}) {
 		t.Fatal("same-session startup sequence was rejected")
 	}
-	if snapshot := server.snapshotLocked(); snapshot.State != "live" || len(snapshot.Prompts) != 1 || snapshot.Prompts[0].Text != "keep" || snapshot.Notice != "" {
+	if snapshot := server.snapshotLocked(); snapshot.State != "live" || len(snapshot.Prompts) != 2 || snapshot.Prompts[0].Text != "keep" || snapshot.Prompts[1].Text != "duplicate" || snapshot.Prompts[0].ID == snapshot.Prompts[1].ID || snapshot.Notice != "" {
 		t.Fatalf("same-session startup snapshot = %#v", snapshot)
 	}
 }

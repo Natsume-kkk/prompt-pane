@@ -2,6 +2,7 @@ package command
 
 import (
 	"errors"
+	"fmt"
 
 	runtimeinstall "github.com/Natsume-kkk/prompt-pane/internal/install"
 	"github.com/Natsume-kkk/prompt-pane/internal/provider/codex"
@@ -66,6 +67,13 @@ func (t *setupTransaction) rollback() error {
 		rollbackErr = errors.Join(rollbackErr, t.restorePlugin())
 	}
 	return rollbackErr
+}
+
+func (t *setupTransaction) rollbackAfter(operationErr error) error {
+	if rollbackErr := t.rollback(); rollbackErr != nil {
+		return fmt.Errorf("%w; installation rollback failed: %v", operationErr, rollbackErr)
+	}
+	return operationErr
 }
 
 func (t *setupTransaction) discard() error {

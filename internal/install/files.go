@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Natsume-kkk/prompt-pane/internal/filetxn"
 	"github.com/Natsume-kkk/prompt-pane/internal/paths"
 )
 
@@ -233,7 +234,7 @@ func copyFileAtomic(source, target string) error {
 	if err := os.Chmod(temporaryPath, 0o700); err != nil {
 		return err
 	}
-	return replaceFile(temporaryPath, targetPath)
+	return filetxn.Replace(temporaryPath, targetPath)
 }
 
 func copyFile(source, target string) error {

@@ -48,8 +48,9 @@ type promptRange struct {
 }
 
 type bodyLayout struct {
-	lines   []string
-	prompts []promptRange
+	lines        []string
+	prompts      []promptRange
+	activityLine int
 }
 
 type textPoint struct {
@@ -57,34 +58,50 @@ type textPoint struct {
 	y int
 }
 
+type overlayPage uint8
+
+const (
+	overlayNone overlayPage = iota
+	overlaySettings
+	overlayHelp
+	overlayAbout
+	overlayTheme
+)
+
 type Model struct {
-	decoder         *json.Decoder
-	snapshot        ipc.Snapshot
-	width           int
-	height          int
-	offset          int
-	following       bool
-	noColor         bool
-	selectedID      string
-	expanded        map[string]bool
-	showHelp        bool
-	showTheme       bool
-	helpOffset      int
-	themeName       string
-	themeSource     config.ThemeSource
-	themeIndex      int
-	themeOriginal   string
-	themeMessage    string
-	lightBackground bool
-	colors          theme.Roles
-	closeViewer     bool
-	pendingClick    bool
-	pendingClickAt  textPoint
-	selecting       bool
-	dragging        bool
-	textSelected    bool
-	selectionStart  textPoint
-	selectionEnd    textPoint
+	decoder           *json.Decoder
+	snapshot          ipc.Snapshot
+	width             int
+	height            int
+	offset            int
+	following         bool
+	noColor           bool
+	selectedID        string
+	expanded          map[string]bool
+	overlay           overlayPage
+	settingsIndex     int
+	settingsMessage   string
+	overlayOffset     int
+	themeName         string
+	themeSource       config.ThemeSource
+	themeIndex        int
+	themeOriginal     string
+	themeMessage      string
+	interfaceLanguage string
+	reducedMotion     bool
+	activity          activityViewState
+	planner           activityPlanner
+	lightBackground   bool
+	backgroundColor   string
+	colors            theme.Roles
+	closeViewer       bool
+	pendingClick      bool
+	pendingClickAt    textPoint
+	selecting         bool
+	dragging          bool
+	textSelected      bool
+	selectionStart    textPoint
+	selectionEnd      textPoint
 }
 
 func New(decoder *json.Decoder) Model {
@@ -93,10 +110,13 @@ func New(decoder *json.Decoder) Model {
 	if err != nil {
 		themeName, source = theme.Auto, config.ThemeDefault
 	}
+	interfaceLanguage, _ := config.LoadInterfaceLanguage()
+	_, reducedMotion := os.LookupEnv("PROMPT_PANE_REDUCED_MOTION")
 	model := Model{
 		decoder: decoder, following: true, noColor: noColor,
 		expanded: make(map[string]bool), snapshot: ipc.Snapshot{State: "ready"},
-		themeName: themeName, themeSource: source,
+		themeName: themeName, themeSource: source, interfaceLanguage: interfaceLanguage,
+		reducedMotion: reducedMotion, planner: newActivityPlanner(),
 	}
 	model.applyTheme(themeName)
 	return model
@@ -113,6 +133,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
 	case tea.BackgroundColorMsg:
 		m.lightBackground = !msg.IsDark()
+		m.backgroundColor = theme.ColorHex(msg.Color)
 		m.applyTheme(m.themeName)
 	case tea.WindowSizeMsg:
 		m.resetPendingClick()
@@ -120,7 +141,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.clampOffset()
-		m.clampHelpOffset()
+		m.clampOverlayOffset()
+		if m.overlay == overlaySettings {
+			m.revealSetting()
+		}
 	case tea.KeyPressMsg:
 		m.resetPendingClick()
 		m.resetTextSelection()
@@ -129,58 +153,60 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.closeViewer = true
 			return m, tea.Quit
 		}
-		if m.showHelp {
+		switch m.overlay {
+		case overlayHelp, overlayAbout:
 			switch key {
-			case "h", "esc":
-				m.showHelp = false
-				m.helpOffset = 0
-			case "t":
-				m.showHelp = false
-				m.showTheme = true
-				m.helpOffset = 0
-				m.beginThemePreview()
-			case "pgup":
-				m.scrollHelp(-m.bodyHeight())
-			case "pgdown":
-				m.scrollHelp(m.bodyHeight())
+			case "s", "esc":
+				m.returnToSettings()
+			case "up", "pgup":
+				m.scrollOverlay(-m.bodyHeight())
+			case "down", "pgdown":
+				m.scrollOverlay(m.bodyHeight())
 			}
 			return m, nil
-		}
-		if m.showTheme {
+		case overlayTheme:
 			switch key {
-			case "t", "esc":
+			case "s", "esc":
 				m.cancelThemePreview()
-			case "h":
-				m.cancelThemePreview()
-				m.showHelp = true
+				m.returnToSettings()
 			case "up":
 				m.moveTheme(-1)
-				m.revealHelpTheme()
+				m.revealTheme()
 			case "down":
 				m.moveTheme(1)
-				m.revealHelpTheme()
+				m.revealTheme()
 			case "enter":
 				if m.themeSource == config.ThemeEnvironment {
-					m.themeMessage = theme.Environment + " is active"
+					m.themeMessage = theme.Environment + m.uiText(" 已启用", " is active")
 					return m, nil
 				}
 				name := theme.SelectableNames()[m.themeIndex]
 				return m, saveTheme(name)
 			case "pgup":
-				m.scrollHelp(-m.bodyHeight())
+				m.scrollOverlay(-m.bodyHeight())
 			case "pgdown":
-				m.scrollHelp(m.bodyHeight())
+				m.scrollOverlay(m.bodyHeight())
+			}
+			return m, nil
+		case overlaySettings:
+			switch key {
+			case "s", "esc":
+				m.overlay = overlayNone
+				m.overlayOffset = 0
+			case "up", "k":
+				m.moveSetting(-1)
+			case "down", "j":
+				m.moveSetting(1)
+			case "enter":
+				return m.activateSetting()
 			}
 			return m, nil
 		}
 		switch key {
-		case "h":
-			m.showHelp = true
-			m.helpOffset = 0
-		case "t":
-			m.showTheme = true
-			m.helpOffset = 0
-			m.beginThemePreview()
+		case "s":
+			m.overlay = overlaySettings
+			m.overlayOffset = 0
+			m.revealSetting()
 		case "up", "k":
 			m.moveSelection(-1)
 		case "down", "j":
@@ -234,19 +260,21 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.resetTextSelection()
-		if click && m.showTheme {
+		if click && m.overlay == overlayTheme {
 			m.selectThemeAtRow(msg.Y)
-		} else if click && !m.showHelp {
+		} else if click && m.overlay == overlaySettings {
+			m.selectSettingAtRow(msg.Y)
+		} else if click && m.overlay == overlayNone {
 			m.selectPromptAtRow(msg.Y)
 		}
 	case tea.MouseWheelMsg:
 		m.resetPendingClick()
 		m.resetTextSelection()
-		if m.showHelp || m.showTheme {
+		if m.overlayActive() {
 			if msg.Button == tea.MouseWheelUp {
-				m.scrollHelp(-3)
+				m.scrollOverlay(-3)
 			} else if msg.Button == tea.MouseWheelDown {
-				m.scrollHelp(3)
+				m.scrollOverlay(3)
 			}
 		} else if msg.Button == tea.MouseWheelUp {
 			m.scroll(-3)
@@ -256,10 +284,13 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case snapshotMsg:
 		m.resetPendingClick()
 		m.resetTextSelection()
+		previousSnapshot := m.snapshot
 		wasFollowing := m.following
 		wasAtBottom := m.offset >= m.maxOffset()
 		promptAdded := len(msg.snapshot.Prompts) > len(m.snapshot.Prompts)
+		previousActivePromptID := activePromptID(previousSnapshot)
 		m.snapshot = msg.snapshot
+		m.clampOverlayOffset()
 		if len(m.snapshot.Prompts) == 0 {
 			m.selectedID = ""
 			m.expanded = make(map[string]bool)
@@ -277,20 +308,73 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.clampOffset()
 		}
-		readCmd := readSnapshot(m.decoder)
-		return m, readCmd
+		commands := []tea.Cmd{readSnapshot(m.decoder)}
+		currentActivePromptID := activePromptID(m.snapshot)
+		if currentActivePromptID != previousActivePromptID {
+			if currentActivePromptID != "" {
+				commands = append(commands, m.beginActivity(currentActivePromptID))
+			} else if previousActivePromptID != "" {
+				settle := m.snapshot.State == "live" && samePromptSequence(previousSnapshot.Prompts, m.snapshot.Prompts)
+				if command := m.endActivity(settle); command != nil {
+					commands = append(commands, command)
+				}
+			}
+		} else if currentActivePromptID == "" && m.activity.visible &&
+			(m.snapshot.State != "live" || !samePromptSequence(previousSnapshot.Prompts, m.snapshot.Prompts)) {
+			m.endActivity(false)
+		}
+		return m, tea.Batch(commands...)
+	case activityStartMsg:
+		if !m.activityMessageCurrent(msg.promptID, msg.generation) {
+			break
+		}
+		m.activity.visible = true
+		m.activity.settling = false
+		m.activity.frame = 0
+		m.activity.changes = 0
+		m.activity.phrase = m.planner.beginTurn(m.interfaceLanguage)
+		commands := []tea.Cmd{activityPhraseCommand(msg.promptID, msg.generation, activityPhraseDelay(&m.planner, 0, m.reducedMotion))}
+		if !m.reducedMotion {
+			commands = append(commands, activityFrameCommand(msg.promptID, msg.generation))
+		}
+		return m, tea.Batch(commands...)
+	case activityFrameMsg:
+		if !m.activityMessageCurrent(msg.promptID, msg.generation) || !m.activity.visible || m.activity.settling || m.reducedMotion {
+			break
+		}
+		m.activity.frame = (m.activity.frame + 1) % len(activityDotFrames)
+		return m, activityFrameCommand(msg.promptID, msg.generation)
+	case activityPhraseMsg:
+		if !m.activityMessageCurrent(msg.promptID, msg.generation) || !m.activity.visible || m.activity.settling {
+			break
+		}
+		m.activity.changes++
+		m.activity.phrase = m.planner.nextPhrase(m.interfaceLanguage)
+		return m, activityPhraseCommand(msg.promptID, msg.generation, activityPhraseDelay(&m.planner, m.activity.changes, m.reducedMotion))
+	case activityClearMsg:
+		if msg.generation == m.activity.generation && m.activity.settling {
+			m.activity = activityViewState{generation: msg.generation}
+		}
+	case interfaceLanguageSavedMsg:
+		m.interfaceLanguage = msg.language
+		m.settingsMessage = ""
+		if m.activity.visible && !m.activity.settling && activePromptID(m.snapshot) != "" {
+			m.activity.phrase = m.planner.beginTurn(m.interfaceLanguage)
+			m.activity.changes = 0
+		}
+	case interfaceLanguageSaveFailedMsg:
+		m.settingsMessage = m.uiText("无法保存语言设置：", "Could not save language: ") + msg.err.Error()
 	case themeSavedMsg:
 		m.themeName = msg.name
 		m.themeSource = config.ThemeConfig
 		m.applyTheme(msg.name)
 		m.themeOriginal = msg.name
 		m.themeMessage = ""
-		m.showTheme = false
-		m.helpOffset = 0
+		m.returnToSettings()
 	case themeSaveFailedMsg:
 		m.applyTheme(m.themeOriginal)
 		m.syncThemeIndex(m.themeOriginal)
-		m.themeMessage = "Could not save theme: " + msg.err.Error()
+		m.themeMessage = m.uiText("无法保存主题：", "Could not save theme: ") + msg.err.Error()
 	case streamEndedMsg:
 		m.resetPendingClick()
 		m.resetTextSelection()
@@ -298,6 +382,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.snapshot.State = "error"
 			m.snapshot.Notice = "Prompt stream disconnected"
 		}
+		m.snapshot.ActiveTurnID = ""
+		m.snapshot.ActivePromptID = ""
+		m.activity.generation++
+		m.activity = activityViewState{generation: m.activity.generation}
 	}
 	return m, nil
 }
@@ -359,9 +447,93 @@ func (m *Model) syncThemeIndex(name string) {
 
 func (m *Model) cancelThemePreview() {
 	m.applyTheme(m.themeOriginal)
-	m.showTheme = false
-	m.helpOffset = 0
 	m.themeMessage = ""
+}
+
+func (m *Model) returnToSettings() {
+	m.overlay = overlaySettings
+	m.overlayOffset = 0
+	m.revealSetting()
+}
+
+func (m *Model) moveSetting(delta int) {
+	settingCount := len(m.settingLabels())
+	m.settingsIndex = (m.settingsIndex + delta + settingCount) % settingCount
+	m.settingsMessage = ""
+	m.revealSetting()
+}
+
+func (m Model) activateSetting() (tea.Model, tea.Cmd) {
+	switch m.settingsIndex {
+	case 0:
+		m.overlay = overlayTheme
+		m.overlayOffset = 0
+		m.beginThemePreview()
+	case 1:
+		language := config.InterfaceLanguageEnglish
+		if m.interfaceLanguage == config.InterfaceLanguageEnglish {
+			language = config.InterfaceLanguageChinese
+		}
+		return m, saveInterfaceLanguage(language)
+	case 2:
+		m.overlay = overlayHelp
+		m.overlayOffset = 0
+	case 3:
+		m.overlay = overlayAbout
+		m.overlayOffset = 0
+	}
+	return m, nil
+}
+
+func (m Model) settingLabels() []string {
+	return []string{
+		m.uiText("主题", "Theme"),
+		m.uiText("界面语言", "Language"),
+		m.uiText("帮助", "Help"),
+		m.uiText("关于", "About"),
+	}
+}
+
+func (m *Model) selectSettingAtRow(row int) int {
+	if m.overlay != overlaySettings || row < 0 || row >= m.bodyHeight() {
+		return -1
+	}
+	line := m.overlayOffset + row
+	lines := m.settingsLines()
+	if line < 0 || line >= len(lines) {
+		return -1
+	}
+	text := strings.TrimSpace(ansi.Strip(lines[line]))
+	text = strings.TrimPrefix(text, "› ")
+	for index, label := range m.settingLabels() {
+		if strings.HasPrefix(text, label) {
+			m.settingsIndex = index
+			m.settingsMessage = ""
+			return index
+		}
+	}
+	return -1
+}
+
+func (m *Model) revealSetting() {
+	labels := m.settingLabels()
+	if m.settingsIndex < 0 || m.settingsIndex >= len(labels) {
+		return
+	}
+	target := labels[m.settingsIndex]
+	selected := -1
+	for index, line := range m.settingsLines() {
+		text := strings.TrimSpace(ansi.Strip(line))
+		text = strings.TrimPrefix(text, "› ")
+		if strings.HasPrefix(text, target) {
+			selected = index
+			break
+		}
+	}
+	if selected < 0 {
+		return
+	}
+	m.revealOverlayLine(selected)
 }
 
 func (m *Model) moveTheme(delta int) {
@@ -371,7 +543,7 @@ func (m *Model) moveTheme(delta int) {
 	m.themeMessage = ""
 }
 
-func (m *Model) revealHelpTheme() {
+func (m *Model) revealTheme() {
 	selected := -1
 	for index, line := range m.themeLines() {
 		if strings.Contains(ansi.Strip(line), "› "+m.themeName) {
@@ -382,20 +554,24 @@ func (m *Model) revealHelpTheme() {
 	if selected < 0 {
 		return
 	}
+	m.revealOverlayLine(selected)
+}
+
+func (m *Model) revealOverlayLine(selected int) {
 	height := m.bodyHeight()
-	if selected < m.helpOffset {
-		m.helpOffset = selected
-	} else if selected >= m.helpOffset+height {
-		m.helpOffset = selected - height + 1
+	if selected < m.overlayOffset {
+		m.overlayOffset = selected
+	} else if selected >= m.overlayOffset+height {
+		m.overlayOffset = selected - height + 1
 	}
-	m.clampHelpOffset()
+	m.clampOverlayOffset()
 }
 
 func (m *Model) selectThemeAtRow(row int) int {
-	if !m.showTheme || row < 0 || row >= m.bodyHeight() {
+	if m.overlay != overlayTheme || row < 0 || row >= m.bodyHeight() {
 		return -1
 	}
-	line := m.helpOffset + row
+	line := m.overlayOffset + row
 	lines := m.themeLines()
 	if line < 0 || line >= len(lines) {
 		return -1
@@ -406,7 +582,7 @@ func (m *Model) selectThemeAtRow(row int) int {
 			m.themeIndex = index
 			m.applyTheme(name)
 			m.themeMessage = ""
-			m.revealHelpTheme()
+			m.revealTheme()
 			return index
 		}
 	}
@@ -435,34 +611,42 @@ func (m *Model) clampOffset() {
 	}
 }
 
-func (m *Model) scrollHelp(delta int) {
-	m.helpOffset += delta
-	m.clampHelpOffset()
+func (m *Model) scrollOverlay(delta int) {
+	m.overlayOffset += delta
+	m.clampOverlayOffset()
 }
 
-func (m *Model) clampHelpOffset() {
-	if m.helpOffset < 0 {
-		m.helpOffset = 0
+func (m *Model) clampOverlayOffset() {
+	if m.overlayOffset < 0 {
+		m.overlayOffset = 0
 	}
-	if maximum := m.helpMaxOffset(); m.helpOffset > maximum {
-		m.helpOffset = maximum
+	if maximum := m.overlayMaxOffset(); m.overlayOffset > maximum {
+		m.overlayOffset = maximum
 	}
 }
 
-func (m Model) helpMaxOffset() int {
+func (m Model) overlayMaxOffset() int {
 	maximum := len(m.overlayLines()) - m.bodyHeight()
 	return max(0, maximum)
 }
 
 func (m Model) overlayActive() bool {
-	return m.showHelp || m.showTheme
+	return m.overlay != overlayNone
 }
 
 func (m Model) overlayLines() []string {
-	if m.showTheme {
+	switch m.overlay {
+	case overlayTheme:
 		return m.themeLines()
+	case overlayHelp:
+		return m.helpLines()
+	case overlayAbout:
+		return m.aboutLines()
+	case overlaySettings:
+		return m.settingsLines()
+	default:
+		return nil
 	}
-	return m.helpLines()
 }
 
 func (m *Model) moveSelection(delta int) bool {
@@ -577,6 +761,9 @@ func (m Model) textSelectionPoint(x, y int, clamp bool) (textPoint, bool) {
 		return textPoint{}, false
 	}
 	lines := m.visibleBodyLines()
+	if !m.overlayActive() && m.visibleActivityRow(y) {
+		return textPoint{}, false
+	}
 	if !clamp && (y >= len(lines) || x >= ansi.StringWidth(lines[y])) {
 		return textPoint{}, false
 	}
@@ -600,6 +787,10 @@ func (m Model) selectedText() string {
 	}
 	selected := make([]string, 0, end.y-start.y+1)
 	for row := start.y; row <= end.y; row++ {
+		if !m.overlayActive() && m.visibleActivityRow(row) {
+			selected = append(selected, "")
+			continue
+		}
 		left, right := m.selectionColumns(lines[row], row)
 		selected = append(selected, ansi.Strip(ansi.Cut(lines[row], left, right)))
 	}
@@ -722,13 +913,22 @@ func (m Model) belowNoticeLayout(layout bodyLayout, bodyHeight int) string {
 	if !visible {
 		return ""
 	}
-	text := "↓ More below"
-	if count == 1 {
-		text = "↓ 1 prompt below"
-	} else if count > 1 {
-		text = fmt.Sprintf("↓ %d prompts below", count)
+	return " " + m.styleAction(m.belowText(count))
+}
+
+func (m Model) viewerNoticeLayout(layout bodyLayout, bodyHeight int) string {
+	if m.snapshot.State == "error" && len(m.snapshot.Prompts) > 0 {
+		notice := m.stateNotice("error")
+		if m.snapshot.Notice != "" {
+			notice = m.localizedNotice(m.snapshot.Notice)
+		}
+		return " " + m.styleNotice(notice)
 	}
-	return " " + m.styleAction(text)
+	return m.belowNoticeLayout(layout, bodyHeight)
+}
+
+func (m Model) hasViewerErrorNotice() bool {
+	return m.snapshot.State == "error" && len(m.snapshot.Prompts) > 0
 }
 
 func (m Model) bodyHeight() int {
@@ -741,10 +941,16 @@ func (m Model) bodyHeight() int {
 		if m.height >= 10 {
 			height -= len(m.renderStatusBlock(2)) + 1
 		} else if m.height >= 6 {
-			height -= len(m.renderStatusBlock(2))
+			reserved := len(m.renderStatusBlock(2))
+			if m.hasViewerErrorNotice() {
+				reserved = max(reserved, 2)
+			}
+			height -= reserved
 		} else if m.height >= 3 {
 			height--
-			if _, visible := m.promptsBelow(max(1, height)); visible {
+			if m.hasViewerErrorNotice() {
+				height--
+			} else if _, visible := m.promptsBelow(max(1, height)); visible {
 				height--
 			}
 		}
@@ -766,7 +972,7 @@ func (m Model) render() string {
 			padding = " "
 			noticeWidth--
 		}
-		lines := strings.Split(wrapMixedText("Pane too narrow", noticeWidth), "\n")
+		lines := strings.Split(wrapMixedText(m.uiText("窗格太窄", "Pane too narrow"), noticeWidth), "\n")
 		for index := range lines {
 			lines[index] = padding + lines[index]
 		}
@@ -790,6 +996,8 @@ func (m Model) render() string {
 		bodyHeight = m.height - len(fullStatus)
 		if m.height >= 10 {
 			bodyHeight--
+		} else if m.hasViewerErrorNotice() {
+			bodyHeight--
 		}
 		bodyHeight = max(1, bodyHeight)
 	}
@@ -799,11 +1007,11 @@ func (m Model) render() string {
 	notice := ""
 	if m.overlayActive() {
 		body = m.overlayLines()
-		start = m.helpOffset
+		start = m.overlayOffset
 	} else {
 		layout := m.layoutBody()
 		body = layout.lines
-		notice = m.belowNoticeLayout(layout, bodyHeight)
+		notice = m.viewerNoticeLayout(layout, bodyHeight)
 	}
 	visible := visibleLines(body, start, bodyHeight)
 	if m.textSelected || m.selecting && m.dragging {
@@ -825,8 +1033,6 @@ func (m Model) render() string {
 		} else {
 			lines = append(lines, fullStatus...)
 		}
-	} else if m.height >= 8 {
-		lines = append(lines, "", m.renderFooter())
 	} else if m.height >= 3 {
 		if notice != "" {
 			lines = append(lines, notice)
@@ -841,12 +1047,14 @@ func (m Model) visibleBodyLines() []string {
 	start := m.offset
 	if m.overlayActive() {
 		body = m.overlayLines()
-		start = m.helpOffset
+		start = m.overlayOffset
 	}
 	return visibleLines(body, start, m.bodyHeight())
 }
 
 func visibleLines(body []string, start, height int) []string {
+	height = max(0, height)
+	start = min(max(0, start), len(body))
 	end := min(len(body), start+height)
 	visible := append([]string(nil), body[start:end]...)
 	for len(visible) < height {
@@ -860,6 +1068,9 @@ func (m Model) renderTextSelection(line string, row int) string {
 	if row < start.y || row > end.y {
 		return line
 	}
+	if !m.overlayActive() && m.visibleActivityRow(row) {
+		return line
+	}
 	left, right := m.selectionColumns(line, row)
 	if right <= left {
 		return line
@@ -867,51 +1078,67 @@ func (m Model) renderTextSelection(line string, row int) string {
 	prefix := ansi.Cut(line, 0, left)
 	selected := ansi.Strip(ansi.Cut(line, left, right))
 	suffix := ansi.Cut(line, right, ansi.StringWidth(line))
+	return prefix + m.styleTextSelection(selected) + suffix
+}
+
+func (m Model) styleTextSelection(text string) string {
 	selectionStyle := lipgloss.NewStyle().Reverse(true)
 	if !m.noColor {
 		// Explicit cell colors avoid reverse-video continuation artifacts when
 		// a selection ends on a double-width grapheme behind a multiplexer.
 		colors := m.visualRoles()
-		selectionStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(colors.Selection)).Background(lipgloss.Color(colors.Cell))
+		selectionStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(colors.SelectionText)).Background(lipgloss.Color(colors.SelectionSurface))
+		if m.backgroundColor != "" && !theme.MeetsContrast(colors.SelectionSurface, m.backgroundColor, theme.MinimumSelectionBoundaryContrast) {
+			selectionStyle = selectionStyle.Underline(true)
+		}
 	}
-	return prefix + selectionStyle.Render(selected) + suffix
+	return selectionStyle.Render(text)
 }
 
 func (m Model) renderFooter() string {
-	left := " " + m.styleState("["+stateLabel(m.snapshot.State)+"]")
+	left := ""
 	if m.width < 20 {
 		return left
 	}
 
-	actions := "h help"
-	if m.width >= 32 {
-		actions = "h help · t theme"
-	}
-	if m.showHelp {
-		left = " " + m.styleAction(m.overlayPageLabel("Help"))
-		actions = "PgUp/PgDn scroll · Esc close"
-		if m.width < 40 {
-			actions = "PgUp/PgDn · Esc"
+	actions := m.settingsAction()
+	switch m.overlay {
+	case overlayHelp:
+		label, multiplePages := m.overlayPageInfo(m.uiText("帮助", "Help"))
+		left = " " + m.styleAction(label)
+		actions = m.overlayScrollActions(multiplePages)
+	case overlayAbout:
+		label, multiplePages := m.overlayPageInfo("")
+		left = ""
+		if label != "" {
+			left = " " + m.styleAction(label)
 		}
-		if m.width < 26 {
-			actions = "Esc close"
+		actions = m.overlayScrollActions(multiplePages)
+	case overlayTheme:
+		label, _ := m.overlayPageInfo("")
+		left = ""
+		if label != "" {
+			left = " " + m.styleAction(label)
 		}
-	} else if m.showTheme {
-		left = " " + m.styleAction(m.overlayPageLabel("Theme"))
-		actions = "↑/↓ select · Enter save · Esc cancel"
+		actions = m.uiText("↑/↓ 预览 · Enter 保存 · Esc 取消", "↑/↓ preview · Enter save · Esc cancel")
 		if m.width < 52 {
-			actions = "↑/↓ · Enter save · Esc cancel"
+			actions = m.uiText("↑/↓ · Enter 保存 · Esc 取消", "↑/↓ · Enter save · Esc cancel")
 		}
-		if m.width < 45 {
-			actions = "↑/↓ · Enter save"
+		if m.width < 38 {
+			actions = "↑/↓ · Enter · Esc"
 		}
 		if m.width < 26 {
-			actions = "↑/↓ Enter"
+			actions = "↑↓ Enter Esc"
 		}
-	} else if m.belowNotice() != "" {
-		actions = ""
-	} else if m.snapshot.Metrics != nil && m.height < 6 {
-		actions = m.compactMetrics()
+	case overlaySettings:
+		left = ""
+		actions = m.uiText("Esc 关闭", "Esc close")
+	default:
+		if m.belowNotice() != "" && !m.hasViewerErrorNotice() {
+			actions = ""
+		} else if m.snapshot.Metrics != nil && m.height < 6 {
+			actions = m.compactMetrics()
+		}
 	}
 	right := m.styleAction(actions + " ")
 	gap := m.width - ansi.StringWidth(left) - ansi.StringWidth(right)
@@ -922,17 +1149,45 @@ func (m Model) renderFooter() string {
 	return left + strings.Repeat(" ", gap) + right
 }
 
-func (m Model) overlayPageLabel(name string) string {
-	if m.width < 26 {
-		name = name[:1]
+func (m Model) overlayPageInfo(name string) (string, bool) {
+	separator := " "
+	if name != "" && m.width < 26 {
+		name = string([]rune(name)[0])
+		if m.chineseUI() {
+			separator = ""
+		}
 	}
 	height := max(1, m.bodyHeight())
 	total := max(1, (len(m.overlayLines())+height-1)/height)
-	current := min(total, m.helpOffset/height+1)
-	if m.helpOffset == m.helpMaxOffset() {
+	if total == 1 {
+		return name, false
+	}
+	current := min(total, m.overlayOffset/height+1)
+	if m.overlayOffset == m.overlayMaxOffset() {
 		current = total
 	}
-	return fmt.Sprintf("%s %d/%d", name, current, total)
+	position := fmt.Sprintf("%d/%d", current, total)
+	if name == "" {
+		return position, true
+	}
+	return name + separator + position, true
+}
+
+func (m Model) overlayScrollActions(multiplePages bool) string {
+	if !multiplePages {
+		return m.uiText("Esc 返回", "Esc back")
+	}
+	actions := m.uiText("↑/↓ 翻页 · PgUp/PgDn · Esc 返回", "↑/↓ scroll · PgUp/PgDn · Esc back")
+	if m.width < 56 {
+		actions = m.uiText("↑/↓ 翻页 · Esc 返回", "↑/↓ scroll · Esc back")
+	}
+	if m.width < 32 {
+		actions = "↑/↓ · Esc"
+	}
+	if m.width < 26 {
+		actions = "↑↓ Esc"
+	}
+	return actions
 }
 
 func (m Model) compactMetrics() string {
@@ -940,209 +1195,295 @@ func (m Model) compactMetrics() string {
 	if metrics == nil {
 		return ""
 	}
-	parts := make([]string, 0, 3)
+	parts := make([]string, 0, 1+len(metrics.Quotas))
 	if metrics.TotalTokens > 0 {
 		parts = append(parts, "T "+compactNumber(metrics.TotalTokens))
 	}
-	if metrics.FiveHour != nil {
-		parts = append(parts, fmt.Sprintf("5h %.0f%%", metrics.FiveHour.UsedPercent))
-	}
-	if metrics.SevenDay != nil {
-		parts = append(parts, fmt.Sprintf("7d %.0f%%", metrics.SevenDay.UsedPercent))
+	for _, quota := range metrics.Quotas {
+		parts = append(parts, fmt.Sprintf("%s %.0f%%", quotaWindowLabel(quota.WindowMinutes), quota.UsedPercent))
 	}
 	return strings.Join(parts, " · ")
 }
 
+func (m Model) settingsLines() []string {
+	entries := []string{m.styleAction(" " + m.uiText("设置", "Settings"))}
+	entries = append(entries, "")
+	labels := m.settingLabels()
+	values := []string{m.themeName, m.languageLabel(m.interfaceLanguage), "", ""}
+	labelWidth := ansi.StringWidth(labels[1])
+	for index, label := range labels {
+		marker := "  "
+		if index == m.settingsIndex {
+			marker = "› "
+		}
+		line := " " + marker + label
+		if values[index] != "" {
+			if m.width >= 32 {
+				line = " " + marker + padRightCells(label, labelWidth) + "  " + values[index]
+			} else {
+				line += "  " + values[index]
+			}
+		}
+		if index == m.settingsIndex {
+			line = m.styleSettingSelection(line)
+		}
+		entries = append(entries, line)
+	}
+	if m.settingsMessage != "" {
+		entries = append(entries, "", m.styleError("   "+m.settingsMessage))
+	}
+	return entries
+}
+
 func (m Model) helpLines() []string {
-	entries := []string{" Help", ""}
+	entries := []string{}
+	connectionHeading := m.uiText(" 连接", " Connection")
+	helpControlsHeading := m.uiText(" 帮助页操作", " Help controls")
+	settingsControlsHeading := m.uiText(" 设置页操作", " Settings controls")
+	promptControlsHeading := m.uiText(" 提示词操作 · 帮助页外", " Prompt controls · outside Help")
+	metricsHeading := m.uiText(" 指标说明", " Metrics")
+	gitHeading := m.uiText(" Git 状态", " Git status")
+	paneHeading := m.uiText(" 窗格操作", " Pane controls")
+	helpScrollAction := m.uiText("整页滚动帮助", "Scroll help by page")
+	settingsEnterAction := m.uiText("打开页面或切换语言", "Open page or switch language")
+	settingsCloseAction := m.uiText("关闭设置", "Close settings")
+	if m.width < 52 {
+		helpScrollAction = m.uiText("翻页", "Page scroll")
+		settingsEnterAction = m.uiText("打开/切换", "Open/switch")
+		settingsCloseAction = m.uiText("关闭", "Close")
+	}
+	if m.width < 24 {
+		promptControlsHeading = m.uiText(" 提示词 · 页外", " Prompt · outside")
+	} else if m.width < 32 {
+		promptControlsHeading = m.uiText(" 提示词 · 帮助页外", " Prompt · outside Help")
+	}
 	if m.snapshot.State == "ready" {
-		entries = append(entries, " Connection")
+		entries = append(entries, connectionHeading)
 		if m.width < 32 {
 			entries = append(entries,
-				"   Submit a prompt.",
-				"   If it is missing:",
-				"   1. Open /hooks.",
-				"   2. Trust it.",
-				"   3. Restart",
+				m.uiText("   先提交提示词。", "   Submit a prompt."),
+				m.uiText("   若没有显示：", "   If it is missing:"),
+				m.uiText("   1. 打开 /hooks。", "   1. Open /hooks."),
+				m.uiText("   2. 信任它。", "   2. Trust it."),
+				m.uiText("   3. 重启", "   3. Restart"),
 				"      codex.pp",
 				"",
 			)
 		} else if m.width < 52 {
 			entries = append(entries,
-				"   Submit your first prompt.",
-				"   If it does not appear:",
-				"   1. Open /hooks.",
-				"   2. Trust Prompt Pane.",
-				"   3. Restart codex.pp",
+				m.uiText("   先提交第一条提示词。", "   Submit your first prompt."),
+				m.uiText("   若没有显示：", "   If it does not appear:"),
+				m.uiText("   1. 打开 /hooks。", "   1. Open /hooks."),
+				m.uiText("   2. 信任 Prompt Pane。", "   2. Trust Prompt Pane."),
+				m.uiText("   3. 重启 codex.pp", "   3. Restart codex.pp"),
 				"",
 			)
 		} else {
 			entries = append(entries,
-				"   Submit your first prompt.",
-				"   If a prompt does not appear:",
-				"   1. Open /hooks in Codex.",
-				"   2. Trust Prompt Pane.",
-				"   3. Restart codex.pp.",
+				m.uiText("   先提交第一条提示词。", "   Submit your first prompt."),
+				m.uiText("   若提示词没有显示：", "   If a prompt does not appear:"),
+				m.uiText("   1. 在 Codex 中打开 /hooks。", "   1. Open /hooks in Codex."),
+				m.uiText("   2. 信任 Prompt Pane。", "   2. Trust Prompt Pane."),
+				m.uiText("   3. 重启 codex.pp。", "   3. Restart codex.pp."),
 				"",
 			)
 		}
 	}
 	if m.width < 32 {
 		entries = append(entries,
-			" Help controls",
-			"   PgUp/PgDn Scroll",
-			"   h/Esc Close",
-			"   t Theme settings",
-			"   Ctrl+X Close pane",
+			helpControlsHeading,
+			m.uiText("   ↑/↓    翻页", "   ↑/↓    Scroll"),
+			m.uiText("   PgUp/PgDn 翻页", "   PgUp/PgDn Scroll"),
+			m.uiText("   Esc    返回", "   Esc    Back"),
+			m.uiText("   Ctrl+X 关闭窗格", "   Ctrl+X Close pane"),
 			"",
-			" Prompt controls",
-			"   Outside Help",
-			"   ↑/k    Previous",
-			"   ↓/j    Next",
-			"   PgUp/PgDn Scroll",
-			"   Home   First",
-			"   End    Latest",
-			"   Enter Expand/fold",
-			"   Drag Copy text",
-			"   c      Fold all",
+			settingsControlsHeading,
+			m.uiText("   ↑/↓   选择设置", "   ↑/↓   Select"),
+			m.uiText("   单击   选择设置", "   Click  Select"),
+			m.uiText("   Enter 打开/切换", "   Enter Open/switch"),
+			m.uiText("   Esc   关闭", "   Esc   Close"),
 			"",
-			" Git status",
+			promptControlsHeading,
+			m.uiText("   ↑/k    上一条", "   ↑/k    Previous"),
+			m.uiText("   ↓/j    下一条", "   ↓/j    Next"),
+			m.uiText("   PgUp/PgDn 滚动", "   PgUp/PgDn Scroll"),
+			m.uiText("   Home   第一条", "   Home   First"),
+			m.uiText("   End    最新一条", "   End    Latest"),
+			m.uiText("   Enter 展开/折叠", "   Enter Expand/fold"),
+			m.uiText("   拖动   复制文字", "   Drag Copy text"),
+			m.uiText("   c      全部折叠", "   c      Fold all"),
+			m.uiText("   s      设置", "   s      Settings"),
+			"",
+			metricsHeading,
+			m.uiText("   额度未显示", "   Quota hidden"),
+			m.uiText("   暂无可靠额度数据", "   No reliable quota"),
+			m.uiText("   不影响 Codex 使用", "   Codex still works"),
+			"",
+			gitHeading,
 			"   main* +N -N ?N",
-			"   branch Current",
-			"   * Tracked edits",
-			"   +N/-N Lines",
-			"   ?N Untracked",
+			m.uiText("   分支   当前分支", "   branch Current"),
+			m.uiText("   * 已跟踪改动", "   * Tracked edits"),
+			m.uiText("   +N/-N 改动行数", "   +N/-N Lines"),
+			m.uiText("   ?N 未跟踪文件", "   ?N Untracked"),
 			"",
-			" Pane controls",
-			"   Alt+←/→ Focus",
-			"   Drag edge Resize",
-			"   Alt+=/- Resize",
-			"   Ctrl+p→f Full",
-			"   Custom keys vary",
+			paneHeading,
+			m.uiText("   Alt+←/→ 聚焦", "   Alt+←/→ Focus"),
+			m.uiText("   拖动边缘 调整", "   Drag edge Resize"),
+			m.uiText("   Alt+=/- 调整", "   Alt+=/- Resize"),
+			m.uiText("   Ctrl+p→f 全屏", "   Ctrl+p→f Full"),
+			m.uiText("   自定义键可能不同", "   Custom keys vary"),
 		)
 	} else {
 		entries = append(entries,
-			" Help controls",
-			helpEntry("PgUp/PgDn", "Scroll help"),
-			helpEntry("h/Esc", "Close help"),
-			helpEntry("t", "Theme settings"),
-			helpEntry("Ctrl+X", "Close this pane"),
+			helpControlsHeading,
+			m.helpEntry("↑/↓", helpScrollAction),
+			m.helpEntry("PgUp/PgDn", helpScrollAction),
+			m.helpEntry("Esc", m.uiText("返回设置", "Back to settings")),
+			m.helpEntry("Ctrl+X", m.uiText("关闭当前窗格", "Close this pane")),
 			"",
-			" Prompt controls",
-			m.styleMuted("   Available outside Help"),
-			helpEntry("↑/k", "Previous prompt"),
-			helpEntry("↓/j", "Next prompt"),
-			helpEntry("PgUp/PgDn", "Scroll prompt"),
-			helpEntry("Home", "First prompt"),
-			helpEntry("End", "Latest prompt"),
-			helpEntry("Enter", "Expand or fold"),
-			helpEntry("Drag", "Copy selected text"),
-			helpEntry("c", "Fold all"),
+			settingsControlsHeading,
+			m.helpEntry("↑/↓", m.uiText("选择设置", "Select setting")),
+			m.helpEntry(m.uiText("单击", "Click"), m.uiText("选择设置", "Select setting")),
+			m.helpEntry("Enter", settingsEnterAction),
+			m.helpEntry("Esc", settingsCloseAction),
 			"",
-			" Git status",
+			promptControlsHeading,
+			m.helpEntry("↑/k", m.uiText("上一条提示词", "Previous prompt")),
+			m.helpEntry("↓/j", m.uiText("下一条提示词", "Next prompt")),
+			m.helpEntry("PgUp/PgDn", m.uiText("滚动提示词", "Scroll prompt")),
+			m.helpEntry("Home", m.uiText("第一条提示词", "First prompt")),
+			m.helpEntry("End", m.uiText("最新提示词", "Latest prompt")),
+			m.helpEntry("Enter", m.uiText("展开或折叠", "Expand or fold")),
+			m.helpEntry(m.uiText("拖动", "Drag"), m.uiText("复制选中文字", "Copy selected text")),
+			m.helpEntry("c", m.uiText("全部折叠", "Fold all")),
+			m.helpEntry("s", m.uiText("设置", "Settings")),
+			"",
+			metricsHeading,
 		)
 		if m.width < 52 {
 			entries = append(entries,
-				helpEntry("example", "main* +12 -3 ?1"),
-				helpEntry("branch", "Current branch"),
-				helpEntry("*", "Tracked edits"),
-				helpEntry("+N/-N", "Lines changed"),
-				helpEntry("?N", "Untracked files"),
+				m.uiText("   额度未显示", "   Quota hidden"),
+				m.uiText("   暂无可靠额度数据", "   No reliable data"),
+				m.uiText("   不影响 Codex 使用", "   Codex still works"),
 			)
 		} else {
 			entries = append(entries,
-				helpEntry("example", "main* +12 -3 ?1"),
-				helpEntry("branch", "Current branch"),
-				helpEntry("*", "Tracked files changed"),
-				helpEntry("+N/-N", "Lines since last commit"),
-				helpEntry("?N", "Untracked files"),
+				m.helpEntry(m.uiText("额度未显示", "Quota hidden"), m.uiText("Codex 暂未提供可靠的额度数据", "Codex did not provide reliable quota data")),
+				m.styleMuted(m.uiText("   不影响 Codex 使用", "   Codex still works")),
 			)
 		}
-		entries = append(entries, "", " Pane controls",
-			helpEntry("Alt+←/→", "Focus pane"),
-			helpEntry("Drag edge", "Resize panes"),
+		entries = append(entries, "", gitHeading)
+		if m.width < 52 {
+			entries = append(entries,
+				m.helpEntry(m.uiText("示例", "example"), "main* +12 -3 ?1"),
+				m.helpEntry(m.uiText("分支", "branch"), m.uiText("当前分支", "Current branch")),
+				m.helpEntry("*", m.uiText("已跟踪改动", "Tracked edits")),
+				m.helpEntry("+N/-N", m.uiText("改动行数", "Lines changed")),
+				m.helpEntry("?N", m.uiText("未跟踪文件", "Untracked files")),
+			)
+		} else {
+			entries = append(entries,
+				m.helpEntry(m.uiText("示例", "example"), "main* +12 -3 ?1"),
+				m.helpEntry(m.uiText("分支", "branch"), m.uiText("当前分支", "Current branch")),
+				m.helpEntry("*", m.uiText("已跟踪文件有改动", "Tracked files changed")),
+				m.helpEntry("+N/-N", m.uiText("相对最近提交的改动行数", "Lines since last commit")),
+				m.helpEntry("?N", m.uiText("未跟踪文件", "Untracked files")),
+			)
+		}
+		entries = append(entries, "", paneHeading,
+			m.helpEntry("Alt+←/→", m.uiText("聚焦窗格", "Focus pane")),
+			m.helpEntry(m.uiText("拖动边缘", "Drag edge"), m.uiText("调整窗格大小", "Resize panes")),
 		)
 		if m.width < 52 {
 			entries = append(entries,
-				helpEntry("Alt+=/-", "Resize focus pane"),
-				helpEntry("Ctrl+p→f", "Fullscreen pane"),
-				m.styleMuted("   Zellij defaults"),
-				m.styleMuted("   Custom bindings may differ"),
+				m.helpEntry("Alt+=/-", m.uiText("调整当前窗格", "Resize focus pane")),
+				m.helpEntry("Ctrl+p→f", m.uiText("当前窗格全屏", "Fullscreen pane")),
+				m.styleMuted(m.uiText("   Zellij 默认按键", "   Zellij defaults")),
+				m.styleMuted(m.uiText("   自定义绑定可能不同", "   Custom bindings may differ")),
 			)
 		} else {
 			entries = append(entries,
-				helpEntry("Alt+=/-", "Resize focused pane"),
-				helpEntry("Ctrl+p→f", "Fullscreen focused pane"),
-				m.styleMuted("   Zellij defaults; custom bindings may differ"),
+				m.helpEntry("Alt+=/-", m.uiText("调整当前聚焦窗格", "Resize focused pane")),
+				m.helpEntry("Ctrl+p→f", m.uiText("当前聚焦窗格全屏", "Fullscreen focused pane")),
+				m.styleMuted(m.uiText("   Zellij 默认按键；自定义绑定可能不同", "   Zellij defaults; custom bindings may differ")),
 			)
 		}
+	}
+	headings := map[string]struct{}{
+		strings.TrimSpace(connectionHeading):       {},
+		strings.TrimSpace(helpControlsHeading):     {},
+		strings.TrimSpace(settingsControlsHeading): {},
+		strings.TrimSpace(promptControlsHeading):   {},
+		strings.TrimSpace(metricsHeading):          {},
+		strings.TrimSpace(gitHeading):              {},
+		strings.TrimSpace(paneHeading):             {},
 	}
 	for index, entry := range entries {
-		switch strings.TrimSpace(entry) {
-		case "Help", "Connection", "Help controls", "Prompt controls", "Git status", "Pane controls":
+		if _, heading := headings[strings.TrimSpace(entry)]; heading {
 			entries[index] = m.styleAction(entry)
 		}
-	}
-	versionLine := "   Prompt Pane v" + appversion.Current
-	if ansi.StringWidth(versionLine) > m.width {
-		versionLine = "   Prompt Pane " + appversion.Current
-	}
-	entries = append(entries, "", m.styleAction(" About"), versionLine)
-	if m.width < 32 {
-		entries = append(entries,
-			"   Windows x64",
-			"   PowerShell",
-			"   Zellij "+zellij.Version,
-			"   Token Tracker",
-		)
-	} else if m.width < 48 {
-		entries = append(entries,
-			"   Windows x64 · PowerShell",
-			"   Zellij "+zellij.Version,
-			"   Token Tracker visuals",
-		)
-	} else {
-		entries = append(entries,
-			"   Windows x64 · PowerShell · Zellij "+zellij.Version,
-			"   Visuals based on Token Tracker",
-		)
 	}
 	return entries
 }
 
+func (m Model) aboutLines() []string {
+	versionLine := "   Prompt Pane v" + appversion.Current
+	if ansi.StringWidth(versionLine) > m.width {
+		versionLine = "   Prompt Pane " + appversion.Current
+	}
+	if ansi.StringWidth(versionLine) > m.width {
+		versionLine = "   v" + strings.TrimPrefix(appversion.Current, "v")
+	}
+	environmentHeading := m.uiText(" 支持环境", " Supported environment")
+	if ansi.StringWidth(environmentHeading) > m.width {
+		environmentHeading = m.uiText(" 支持环境", " Environment")
+	}
+	return []string{
+		m.styleAction(" " + m.uiText("关于", "About")),
+		"",
+		versionLine,
+		"",
+		m.styleAction(environmentHeading),
+		"   Windows x64",
+		"   PowerShell 5.1/7",
+		"   Codex CLI",
+		"   Zellij " + zellij.Version,
+		"",
+		m.styleAction(" " + m.uiText("视觉参考", "Visual reference")),
+		"   Token Tracker",
+	}
+}
+
 func (m Model) themeLines() []string {
-	entries := []string{m.styleAction(" Theme")}
+	entries := []string{m.styleAction(" " + m.uiText("主题", "Theme"))}
 	if instruction := m.themeInstruction(); instruction != "" {
 		entries = append(entries, instruction)
 	}
 	entries = append(entries, "")
 	names := theme.SelectableNames()
-	nameWidth := helpLabelWidth()
+	nameWidth := themeNameWidth()
 	for index, name := range names {
 		marker := "  "
 		if index == m.themeIndex {
 			marker = "› "
 		}
-		label := fmt.Sprintf(" %s%-*s", marker, nameWidth, name)
-		if m.noColor {
-			if index == m.themeIndex {
-				label = lipgloss.NewStyle().Bold(true).Render(label)
-			}
-		} else if index == m.themeIndex {
-			label = m.styleColor(label, m.visualRoles().ThemePick)
+		label := " " + marker + padRightCells(name, nameWidth)
+		if index == m.themeIndex {
+			label = m.styleThemeSelection(label)
 		}
 		entries = append(entries, label+m.themeSwatches(name))
 	}
-	previewTitle := m.styleAction(" Status preview")
-	if ansi.StringWidth(" Status preview · "+m.themeName) <= m.width {
+	previewLabel := m.uiText("界面预览", "Interface preview")
+	previewTitle := m.styleAction(" " + previewLabel)
+	if ansi.StringWidth(" "+previewLabel+" · "+m.themeName) <= m.width {
 		previewTitle += " · " + m.themeName
 	}
 	entries = append(entries, "", previewTitle)
 	entries = append(entries, m.themePreviewLines()...)
 	if m.themeSource == config.ThemeEnvironment {
-		entries = append(entries, "", m.styleWarning("   "+theme.Environment+" overrides saved settings"))
+		entries = append(entries, "", m.styleWarning("   "+theme.Environment+m.uiText(" 正在覆盖已保存设置", " overrides saved settings")))
 	} else if m.themeMessage != "" {
-		entries = append(entries, "", m.styleWarning("   "+m.themeMessage))
+		entries = append(entries, "", m.styleError("   "+m.themeMessage))
 	}
 	return entries
 }
@@ -1152,10 +1493,10 @@ func (m Model) themeInstruction() string {
 		return ""
 	}
 	candidates := []string{
-		"   ↑/↓ or click to preview · Enter save · Esc cancel",
-		"   ↑/↓ or click preview · Enter save · Esc cancel",
-		"   ↑/↓ or click · Enter save",
-		"   ↑/↓/click · Enter",
+		m.uiText("   ↑/↓ 或单击预览 · Enter 保存 · Esc 取消", "   ↑/↓ or click to preview · Enter save · Esc cancel"),
+		m.uiText("   ↑/↓ 或单击 · Enter 保存 · Esc 取消", "   ↑/↓ or click preview · Enter save · Esc cancel"),
+		m.uiText("   ↑/↓ 或单击 · Enter 保存", "   ↑/↓ or click · Enter save"),
+		m.uiText("   ↑/↓/单击 · Enter", "   ↑/↓/click · Enter"),
 		"   ↑/↓ · Enter",
 	}
 	for _, candidate := range candidates {
@@ -1167,54 +1508,62 @@ func (m Model) themeInstruction() string {
 }
 
 func (m Model) themePreviewLines() []string {
-	colors := m.visualRoles()
-	git := m.styleColor("main", colors.Branch) + " " +
-		m.styleColor("+12", colors.Added) + " " +
-		m.styleColor("-3", colors.Deleted) + " " +
-		m.styleColor("?1", colors.Untracked)
-	groups := [][]string{
-		{
-			m.styleColor("[LIVE]", colors.Success),
-			"1 Other prompt",
-			m.styleSelected("2 Selected prompt"),
-			m.styleAction("↓ 3 prompts below"),
-			m.styleAction("h help · t theme"),
+	selectedPrompt := m.uiText("检查这个实现", "Check this code")
+	activeLead := m.uiText("再看", "Test ")
+	activeSelection := m.uiText("边界条件", "edge cases")
+	selectedID := "theme-preview-selected"
+	activeID := "theme-preview-active"
+	preview := m
+	preview.overlay = overlayNone
+	preview.selectedID = selectedID
+	preview.expanded = make(map[string]bool)
+	preview.snapshot = ipc.Snapshot{
+		State:          "live",
+		ActiveTurnID:   activeID,
+		ActivePromptID: activeID,
+		Prompts: []provider.UserPrompt{
+			{ID: selectedID, Text: selectedPrompt},
+			{ID: activeID, Text: activeLead + activeSelection},
 		},
-		{
-			m.styleColor("Total: 2.4M", colors.Token),
-			m.styleColor("Model: gpt-5.6", colors.Model),
-			m.styleColor("Limit:", colors.Label) + " " + m.styleColor("66%", colors.Warning),
-		},
-		{
-			git,
-			m.styleMuted("Muted text"),
-			m.styleColor("[ERROR]", colors.Error),
+		Metrics: &provider.SessionMetrics{
+			Branch:             "main*",
+			Added:              12,
+			Deleted:            3,
+			Untracked:          1,
+			TotalTokens:        2_400_000,
+			Model:              "gpt-5.6",
+			ContextWindow:      258_000,
+			ContextUsedPercent: 42,
+			Quotas:             []provider.QuotaWindow{{WindowMinutes: 300, UsedPercent: 66}},
+			QuotaStatus:        provider.QuotaAvailable,
 		},
 	}
-	lines := make([]string, 0, len(groups))
-	for _, group := range groups {
-		lines = append(lines, packPreviewLines(group, max(1, m.width-3))...)
+	preview.activity = activityViewState{
+		promptID: activeID,
+		phrase:   m.uiText("搁这儿寻思呢…", "Pondering…"),
+		frame:    len(activityDotFrames) - 1,
+		visible:  true,
 	}
-	return lines
-}
 
-func packPreviewLines(items []string, width int) []string {
-	lines := make([]string, 0, len(items))
-	current := ""
-	for _, item := range items {
-		candidate := item
-		if current != "" {
-			candidate = current + "  " + item
-		}
-		if current != "" && ansi.StringWidth(candidate) > width {
-			lines = append(lines, "   "+current)
-			current = item
-			continue
-		}
-		current = candidate
+	layout := preview.layoutBody()
+	lines := append([]string(nil), layout.lines...)
+	if len(layout.prompts) > 1 {
+		lineIndex := layout.prompts[1].start
+		left := 4 + ansi.StringWidth(activeLead)
+		right := left + ansi.StringWidth(activeSelection)
+		line := lines[lineIndex]
+		prefix := ansi.Cut(line, 0, left)
+		selected := ansi.Strip(ansi.Cut(line, left, right))
+		suffix := ansi.Cut(line, right, ansi.StringWidth(line))
+		lines[lineIndex] = prefix + m.styleTextSelection(selected) + suffix
 	}
-	if current != "" {
-		lines = append(lines, "   "+current)
+	lines = append(lines,
+		" "+m.styleAction(m.belowText(3)),
+		"",
+	)
+	lines = append(lines, preview.renderStatusBlock(2)...)
+	for index := range lines {
+		lines[index] = ansi.Truncate(lines[index], max(1, m.width), "")
 	}
 	return lines
 }
@@ -1243,23 +1592,32 @@ func (m Model) themeSwatches(name string) string {
 	return swatches.String()
 }
 
-func helpEntry(key, description string) string {
-	return fmt.Sprintf("   %-*s  %s", helpLabelWidth(), key, description)
+func (m Model) helpEntry(key, description string) string {
+	return "   " + padRightCells(key, m.helpLabelWidth()) + "  " + description
 }
 
-func helpLabelWidth() int {
+func (m Model) helpLabelWidth() int {
 	width := 0
 	for _, label := range []string{
-		"Ctrl+X", "h/Esc", "t", "↑/↓", "↑/k", "↓/j", "PgUp/PgDn", "Home", "End",
-		"Enter", "Drag", "c", "example", "branch", "*", "+N/-N", "?N",
-		"Alt+←/→", "Drag edge", "Alt+=/-", "Ctrl+p→f",
+		"Ctrl+X", "Esc", "s", "↑/↓", "↑/k", "↓/j", "PgUp/PgDn", "Home", "End",
+		"Enter", m.uiText("单击", "Click"), m.uiText("拖动", "Drag"), "c", m.uiText("示例", "example"), m.uiText("分支", "branch"), "*", "+N/-N", "?N",
+		"Alt+←/→", m.uiText("拖动边缘", "Drag edge"), "Alt+=/-", "Ctrl+p→f",
 	} {
 		width = max(width, ansi.StringWidth(label))
 	}
+	return width
+}
+
+func themeNameWidth() int {
+	width := 0
 	for _, name := range theme.SelectableNames() {
 		width = max(width, ansi.StringWidth(name))
 	}
 	return width
+}
+
+func padRightCells(text string, width int) string {
+	return text + strings.Repeat(" ", max(0, width-ansi.StringWidth(text)))
 }
 
 func (m Model) renderStatusBlock(maxLines int) []string {
@@ -1270,9 +1628,15 @@ func (m Model) renderStatusBlock(maxLines int) []string {
 		return []string{m.renderFooter()}
 	}
 	lines := []string{m.renderStatusHeader()}
+	if m.snapshot.State == "error" {
+		return lines
+	}
 	if m.snapshot.Metrics == nil {
-		waiting := " Metrics available after first response"
-		return append(lines, ansi.Truncate(waiting, m.width, ""))
+		if m.snapshot.State == "ready" || m.snapshot.State == "live" {
+			waiting := " " + m.uiText("首次回复后显示指标", "Metrics available after first response")
+			return append(lines, ansi.Truncate(waiting, m.width, ""))
+		}
+		return lines
 	}
 	remaining := maxLines - 1
 	rows := m.renderMetricRows(remaining)
@@ -1287,12 +1651,14 @@ func (m Model) renderStatusBlock(maxLines int) []string {
 
 func (m Model) renderStatusHeader() string {
 	metrics := m.snapshot.Metrics
+	if m.snapshot.State == "error" {
+		metrics = nil
+	}
 	available := max(1, m.width-1)
 	right := ""
-	if m.width >= 32 {
-		right = m.styleAction("h help · t theme")
+	if m.width >= 20 {
+		right = m.styleAction(m.settingsAction())
 	}
-	state := m.styleState("[" + stateLabel(m.snapshot.State) + "]")
 	total := ""
 	if metrics != nil {
 		value := "--"
@@ -1314,21 +1680,21 @@ func (m Model) renderStatusHeader() string {
 		leftAvailable -= ansi.StringWidth(right) + 1
 	}
 	branch := m.renderBranch(metrics, true)
-	left := joinStatusPieces(state+branch, total, model)
+	left := joinStatusPieces(strings.TrimSpace(branch), total, model)
 	if ansi.StringWidth(left) > leftAvailable {
-		left = joinStatusPieces(state+branch, total)
+		left = joinStatusPieces(strings.TrimSpace(branch), total)
 	}
 	if ansi.StringWidth(left) > leftAvailable {
 		branch = m.renderBranch(metrics, false)
-		left = joinStatusPieces(state+branch, total)
+		left = joinStatusPieces(strings.TrimSpace(branch), total)
 	}
 	if ansi.StringWidth(left) > leftAvailable {
-		left = joinStatusPieces(state, total)
+		left = total
 	}
 	if ansi.StringWidth(left) > leftAvailable && right != "" {
 		right = ""
 		leftAvailable = available
-		left = joinStatusPieces(state, total)
+		left = total
 	}
 	left = ansi.Truncate(left, leftAvailable, "")
 	if right == "" {
@@ -1336,6 +1702,13 @@ func (m Model) renderStatusHeader() string {
 	}
 	gap := max(1, available-ansi.StringWidth(left)-ansi.StringWidth(right))
 	return prefixStatus(left + strings.Repeat(" ", gap) + right)
+}
+
+func (m Model) settingsAction() string {
+	if m.width < 21 {
+		return "[s]"
+	}
+	return m.uiText("[s] 设置", "[s] settings")
 }
 
 func joinStatusPieces(pieces ...string) string {
@@ -1353,7 +1726,11 @@ func (m Model) renderBranch(metrics *provider.SessionMetrics, details bool) stri
 		return ""
 	}
 	colors := m.visualRoles()
-	branch := m.styleColor(metrics.Branch, colors.Branch)
+	branchName := strings.TrimSuffix(metrics.Branch, "*")
+	branch := m.styleColor(branchName, colors.Branch)
+	if branchName != metrics.Branch {
+		branch += m.styleColor("*", colors.Branch)
+	}
 	if details {
 		if metrics.Added > 0 {
 			branch += " " + m.styleColor(fmt.Sprintf("+%d", metrics.Added), colors.Added)
@@ -1365,7 +1742,7 @@ func (m Model) renderBranch(metrics *provider.SessionMetrics, details bool) stri
 			branch += " " + m.styleColor(fmt.Sprintf("?%d", metrics.Untracked), colors.Untracked)
 		}
 	}
-	return " (" + branch + ")"
+	return branch
 }
 
 func (m Model) renderMetricRows(maxRows int) []string {
@@ -1382,19 +1759,12 @@ func (m Model) compactMetricRow(available int) string {
 		barWidth = 12
 	}
 	type layout struct {
-		showLimitLabel bool
-		showContext    bool
-		showCapacity   bool
-		showReset      bool
-	}
-	layouts := []layout{
-		{true, true, true, true},
-		{true, true, false, true},
-		{true, true, false, false},
-		{true, false, false, false},
+		showContext  bool
+		showCapacity bool
+		showReset    bool
 	}
 	build := func(width int, layout layout) string {
-		limit := m.limitMetricText(width, layout.showReset, layout.showLimitLabel)
+		limit := m.limitMetricText(width, layout.showReset)
 		parts := make([]string, 0, 2)
 		if limit != "" {
 			parts = append(parts, limit)
@@ -1404,64 +1774,71 @@ func (m Model) compactMetricRow(available int) string {
 		}
 		return strings.Join(parts, " | ")
 	}
-	for _, layout := range layouts {
-		if row := build(barWidth, layout); ansi.StringWidth(row) <= available {
-			return row
+	tryBars := func(layout layout) string {
+		for width := barWidth; width >= 4; width-- {
+			if row := build(width, layout); ansi.StringWidth(row) <= available {
+				return row
+			}
 		}
+		return ""
 	}
-	for width := barWidth - 1; width >= 1; width-- {
-		if row := build(width, layouts[len(layouts)-1]); ansi.StringWidth(row) <= available {
-			return row
-		}
+	if row := tryBars(layout{showContext: true, showCapacity: true, showReset: true}); row != "" {
+		return row
 	}
-	compact := layout{showLimitLabel: false}
-	for width := barWidth; width >= 0; width-- {
-		if row := build(width, compact); ansi.StringWidth(row) <= available {
-			return row
-		}
+	compactContext := layout{showContext: true}
+	if row := tryBars(compactContext); row != "" {
+		return row
 	}
-	return ansi.Truncate(build(0, compact), available, "")
+	if row := build(0, compactContext); ansi.StringWidth(row) <= available {
+		return row
+	}
+	quotaOnly := layout{}
+	if row := tryBars(quotaOnly); row != "" {
+		return row
+	}
+	return ansi.Truncate(build(0, quotaOnly), available, "")
 }
 
-func (m Model) limitMetricText(barWidth int, resetVisible, labelVisible bool) string {
+func (m Model) limitMetricText(barWidth int, resetVisible bool) string {
 	metrics := m.snapshot.Metrics
-	colors := m.visualRoles()
-	limits := make([]string, 0, 2)
-	if metrics.FiveHour != nil {
-		limits = append(limits, m.renderQuota("5h", metrics.FiveHour, barWidth, resetVisible))
-	}
-	if metrics.SevenDay != nil {
-		limits = append(limits, m.renderQuota("7d", metrics.SevenDay, barWidth, resetVisible))
+	limits := make([]string, 0, len(metrics.Quotas))
+	for _, quota := range metrics.Quotas {
+		limits = append(limits, m.renderQuota(quotaWindowLabel(quota.WindowMinutes), quota, barWidth, resetVisible))
 	}
 	if len(limits) == 0 {
 		return ""
 	}
-	prefix := ""
-	if labelVisible {
-		prefix = m.styleColor("Limit: ", colors.Label)
-	}
-	return prefix + strings.Join(limits, "  ")
+	return strings.Join(limits, "  ")
 }
 
 func (m Model) contextMetricText(barWidth int, capacityVisible bool) string {
 	metrics := m.snapshot.Metrics
-	colors := m.visualRoles()
-	if metrics.ContextUsedPercent <= 0 {
-		return m.styleColor("Ctx: --", colors.Label)
+	if metrics.ContextUsedPercent < 0 || metrics.ContextUsedPercent == 0 && metrics.ContextWindow <= 0 {
+		return m.styleColor("Ctx: ", m.visualRoles().Label) + "--"
 	}
 	value := ""
 	if capacityVisible && metrics.ContextWindow > 0 {
 		value = compactNumber(metrics.ContextWindow) + "  "
 	}
-	return m.styleColor("Ctx: "+value, colors.Label) + m.renderPercent(metrics.ContextUsedPercent, barWidth)
+	return m.styleColor("Ctx: "+value, m.visualRoles().Label) + m.renderPercent(metrics.ContextUsedPercent, barWidth)
 }
 
-func (m Model) renderQuota(label string, quota *provider.QuotaWindow, barWidth int, resetVisible bool) string {
+func (m Model) renderQuota(label string, quota provider.QuotaWindow, barWidth int, resetVisible bool) string {
 	text := m.styleColor(label+": ", m.visualRoles().Label) + m.renderPercent(quota.UsedPercent, barWidth)
 	if resetVisible && quota.ResetsAt > time.Now().Unix() {
-		text += m.styleMuted(" (" + formatDuration(quota.ResetsAt-time.Now().Unix()) + ")")
+		text += m.styleColor(" ("+formatDuration(quota.ResetsAt-time.Now().Unix())+")", m.visualRoles().Label)
 	}
 	return text
+}
+
+func quotaWindowLabel(windowMinutes int64) string {
+	if windowMinutes > 0 && windowMinutes%(24*60) == 0 {
+		return fmt.Sprintf("%dd", windowMinutes/(24*60))
+	}
+	if windowMinutes > 0 && windowMinutes%60 == 0 {
+		return fmt.Sprintf("%dh", windowMinutes/60)
+	}
+	return fmt.Sprintf("%dm", windowMinutes)
 }
 
 func (m Model) renderPercent(percent float64, barWidth int) string {
@@ -1471,10 +1848,10 @@ func (m Model) renderPercent(percent float64, barWidth int) string {
 		return m.styleColor(fmt.Sprintf("%.0f%%", percent), color)
 	}
 	filled := int(percent/100*float64(barWidth) + 0.5)
-	bar := m.styleColor(strings.Repeat("█", filled), color)
+	bar := m.styleGraphicColor(strings.Repeat("█", filled), color)
 	empty := strings.Repeat("░", barWidth-filled)
 	if percent > 0 {
-		empty = m.styleColor(empty, color)
+		empty = m.styleGraphicColor(empty, color)
 	}
 	return bar + empty + " " + m.styleColor(fmt.Sprintf("%.0f%%", percent), color)
 }
@@ -1524,47 +1901,74 @@ func (m Model) visualRoles() theme.Roles {
 }
 
 func (m Model) styleColor(text, color string) string {
+	if m.noColor || !m.semanticColorVisible(color) {
+		return text
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(text)
+}
+
+func (m Model) styleGraphicColor(text, color string) string {
 	if m.noColor {
 		return text
 	}
 	return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(text)
 }
 
+func (m Model) semanticColorVisible(color string) bool {
+	return m.backgroundColor == "" || theme.MeetsContrast(color, m.backgroundColor, theme.MinimumTextContrast)
+}
+
 func (m Model) styleWarning(text string) string {
 	return m.styleColor(text, m.visualRoles().Warning)
 }
 
-func (m Model) styleState(label string) string {
-	if m.noColor {
-		return label
-	}
-	switch m.snapshot.State {
-	case "live":
-		return m.styleColor(label, m.visualRoles().Success)
-	case "ready":
-		return m.styleColor(label, m.visualRoles().Accent)
-	case "error":
-		return m.styleColor(label, m.visualRoles().Error)
-	default:
-		return m.styleMuted(label)
-	}
+func (m Model) styleError(text string) string {
+	return m.styleColor(text, m.visualRoles().Error)
 }
 
 func (m Model) styleMuted(text string) string {
-	if m.noColor {
-		return text
-	}
-	return lipgloss.NewStyle().Foreground(lipgloss.Color(m.visualRoles().Muted)).Render(text)
+	return m.styleColor(text, m.visualRoles().Muted)
+}
+
+func (m Model) styleBodyText(text string) string {
+	return m.styleColor(text, m.visualRoles().BodyText)
 }
 
 func (m Model) styleAction(text string) string {
-	return m.styleColor(text, m.visualRoles().Accent)
+	accent := m.visualRoles().Accent
+	if m.noColor || !m.semanticColorVisible(accent) {
+		return lipgloss.NewStyle().Bold(true).Render(text)
+	}
+	return m.styleColor(text, accent)
 }
 
-func (m Model) styleSelected(text string) string {
-	style := lipgloss.NewStyle().Bold(m.noColor)
-	if !m.noColor {
-		style = style.Foreground(lipgloss.Color(m.visualRoles().Accent))
+func (m Model) styleSettingSelection(text string) string {
+	return lipgloss.NewStyle().Bold(true).Render(text)
+}
+
+func (m Model) styleThemeSelection(text string) string {
+	style := lipgloss.NewStyle().Bold(true)
+	selection := m.visualRoles().ThemePick
+	if !m.noColor && m.semanticColorVisible(selection) {
+		style = style.Foreground(lipgloss.Color(selection))
+	}
+	return style.Render(text)
+}
+
+func (m Model) styleActivityText(text string) string {
+	return m.styleColor(text, m.visualRoles().ActivityIndicator)
+}
+
+func (m Model) styleActivityIndicator(text string) string {
+	return m.styleGraphicColor(text, m.visualRoles().ActivityIndicator)
+}
+
+func (m Model) styleEmphasizedPrompt(text string) string {
+	body := m.visualRoles().BodyText
+	visible := !m.noColor && m.semanticColorVisible(body)
+	style := lipgloss.NewStyle().Bold(true)
+	if visible {
+		style = style.Foreground(lipgloss.Color(body))
 	}
 	return style.Render(text)
 }
@@ -1589,9 +1993,9 @@ func (m Model) bodyLines() []string {
 
 func (m Model) layoutBody() bodyLayout {
 	if len(m.snapshot.Prompts) == 0 {
-		notice := stateNotice(m.snapshot.State)
+		notice := m.stateNotice(m.snapshot.State)
 		if m.snapshot.Notice != "" {
-			notice = m.snapshot.Notice
+			notice = m.localizedNotice(m.snapshot.Notice)
 		}
 		lines := wrapText(notice, max(1, m.width-2))
 		for index := range lines {
@@ -1607,14 +2011,17 @@ func (m Model) layoutBody() bodyLayout {
 		textWidth = 1
 	}
 	selected := m.displaySelectedIndex()
-	layout := bodyLayout{prompts: make([]promptRange, 0, len(m.snapshot.Prompts))}
+	activeID := activePromptID(m.snapshot)
+	layout := bodyLayout{prompts: make([]promptRange, 0, len(m.snapshot.Prompts)), activityLine: -1}
 	for index, prompt := range m.snapshot.Prompts {
 		wrapped := wrapText(sanitize(prompt.Text), textWidth)
+		isActive := index == len(m.snapshot.Prompts)-1 && prompt.ID == activeID
+		isEmphasized := index == selected || isActive
 		isLong := len(wrapped) > collapsedLineLimit
 		summaryLine := -1
 		if isLong && !m.expanded[prompt.ID] {
 			hidden := len(wrapped) - collapsedVisibleLines
-			wrapped = append(wrapped[:collapsedVisibleLines], foldSummary(hidden, textWidth, index == selected))
+			wrapped = append(wrapped[:collapsedVisibleLines], m.foldSummary(hidden, textWidth, index == selected))
 			summaryLine = len(wrapped) - 1
 		}
 		start := len(layout.lines)
@@ -1623,30 +2030,65 @@ func (m Model) layoutBody() bodyLayout {
 			if lineIndex == 0 {
 				prefix = fmt.Sprintf(" %*d ", digits, index+1)
 			}
-			if index == selected {
-				if lineIndex == summaryLine {
-					layout.lines = append(layout.lines, m.styleSelected(prefix)+m.styleMuted(line))
-				} else {
-					layout.lines = append(layout.lines, m.styleSelected(prefix+line))
-				}
-				continue
+			styledPrefix := m.styleBodyText(prefix)
+			if isEmphasized {
+				styledPrefix = m.styleEmphasizedPrompt(prefix)
 			}
 			if lineIndex == summaryLine {
-				line = m.styleMuted(line)
+				layout.lines = append(layout.lines, styledPrefix+m.styleMuted(line))
+				continue
 			}
-			layout.lines = append(layout.lines, prefix+line)
+			styledLine := m.styleBodyText(line)
+			if isEmphasized {
+				styledLine = m.styleEmphasizedPrompt(line)
+			}
+			layout.lines = append(layout.lines, styledPrefix+styledLine)
 		}
 		layout.prompts = append(layout.prompts, promptRange{start: start, end: len(layout.lines), long: isLong})
+		tail := ""
+		if index == len(m.snapshot.Prompts)-1 && m.activity.visible {
+			layout.activityLine = len(layout.lines)
+			if activity := m.renderActivity(textWidth); activity != "" {
+				tail = " " + strings.Repeat(" ", digits) + " " + activity
+			}
+		}
+		layout.lines = append(layout.lines, tail)
 	}
 	return layout
 }
 
-func foldSummary(hidden, width int, selected bool) string {
-	full := fmt.Sprintf("… +%d lines", hidden)
+func (m Model) renderActivity(width int) string {
+	if width < 1 || !m.activity.visible {
+		return ""
+	}
+	frameIndex := m.activity.frame % len(activityDotFrames)
+	if m.reducedMotion || m.activity.settling {
+		frameIndex = len(activityDotFrames) - 1
+	}
+	dots := activityDotFrames[frameIndex]
+	if width < 4 {
+		return m.styleActivityIndicator(ansi.Truncate(strings.TrimRight(dots, " "), width, ""))
+	}
+	phrase := strings.TrimSpace(strings.TrimSuffix(m.activity.phrase, "…"))
+	phrase = strings.TrimSpace(strings.TrimSuffix(phrase, "..."))
+	phrase = ansi.Truncate(phrase, width-4, "")
+	if phrase == "" {
+		return m.styleActivityIndicator(dots)
+	}
+	return m.styleActivityText(phrase+" ") + m.styleActivityIndicator(dots)
+}
+
+func (m Model) visibleActivityRow(row int) bool {
+	layout := m.layoutBody()
+	return layout.activityLine >= 0 && m.offset+row == layout.activityLine
+}
+
+func (m Model) foldSummary(hidden, width int, selected bool) string {
+	full := fmt.Sprintf(m.uiText("… 另有 %d 行", "… +%d lines"), hidden)
 	candidates := []string{full, fmt.Sprintf("… +%d", hidden)}
 	if selected {
 		candidates = []string{
-			full + " · Enter expand",
+			full + m.uiText(" · Enter 展开", " · Enter expand"),
 			fmt.Sprintf("… +%d · Enter", hidden),
 			fmt.Sprintf("… +%d", hidden),
 		}
@@ -1682,32 +2124,6 @@ func (m *Model) copyExpanded() {
 		expanded[id] = value
 	}
 	m.expanded = expanded
-}
-
-func stateLabel(state string) string {
-	switch state {
-	case "ready":
-		return "READY"
-	case "live":
-		return "LIVE"
-	case "ended":
-		return "ENDED"
-	default:
-		return "ERROR"
-	}
-}
-
-func stateNotice(state string) string {
-	switch state {
-	case "ready":
-		return "Waiting for your first prompt"
-	case "ended":
-		return "Session ended"
-	case "error":
-		return "Prompt stream unavailable"
-	default:
-		return "Waiting for your first prompt"
-	}
 }
 
 func sanitize(text string) string {
@@ -1747,23 +2163,50 @@ type wrapToken struct {
 	text  string
 	width int
 	space bool
-	word  bool
 }
 
 func wrapMixedText(text string, width int) string {
 	var lines []string
 	for _, sourceLine := range strings.Split(text, "\n") {
 		tokens := mixedWrapTokens(sourceLine)
-		line := ""
+		var line strings.Builder
 		lineWidth := 0
 		pendingSpace := ""
 		pendingWidth := 0
 		flush := func() {
-			lines = append(lines, line)
-			line = ""
+			lines = append(lines, line.String())
+			line.Reset()
 			lineWidth = 0
 			pendingSpace = ""
 			pendingWidth = 0
+		}
+		appendClusters := func(text string) {
+			for text != "" {
+				asciiEnd := 0
+				for asciiEnd < len(text) && text[asciiEnd] >= ' ' && text[asciiEnd] <= '~' {
+					asciiEnd++
+				}
+				if asciiEnd > 0 {
+					for consumed := 0; consumed < asciiEnd; {
+						if line.Len() > 0 && lineWidth >= width {
+							flush()
+						}
+						take := min(asciiEnd-consumed, width-lineWidth)
+						line.WriteString(text[consumed : consumed+take])
+						lineWidth += take
+						consumed += take
+					}
+					text = text[asciiEnd:]
+					continue
+				}
+				cluster, clusterWidth := firstWrapCluster(text)
+				if line.Len() > 0 && lineWidth+clusterWidth > width {
+					flush()
+				}
+				line.WriteString(cluster)
+				lineWidth += clusterWidth
+				text = text[len(cluster):]
+			}
 		}
 		for _, token := range tokens {
 			if token.space {
@@ -1771,70 +2214,96 @@ func wrapMixedText(text string, width int) string {
 				pendingWidth += token.width
 				continue
 			}
-			if line != "" && lineWidth+pendingWidth+token.width > width {
+			if line.Len() > 0 && lineWidth+pendingWidth+token.width > width {
 				flush()
 			}
-			if line == "" && token.width > width {
-				for _, cluster := range graphemeTokens(token.text) {
-					if line != "" && lineWidth+cluster.width > width {
-						flush()
-					}
-					line += cluster.text
-					lineWidth += cluster.width
-				}
+			if line.Len() == 0 && token.width > width {
+				appendClusters(token.text)
 				continue
 			}
 			if lineWidth+pendingWidth+token.width > width {
 				flush()
 			}
-			line += pendingSpace + token.text
+			line.WriteString(pendingSpace)
+			line.WriteString(token.text)
 			lineWidth += pendingWidth + token.width
 			pendingSpace = ""
 			pendingWidth = 0
 		}
 		if pendingSpace != "" {
-			for _, cluster := range graphemeTokens(pendingSpace) {
-				if line != "" && lineWidth+cluster.width > width {
-					flush()
-				}
-				line += cluster.text
-				lineWidth += cluster.width
-			}
+			appendClusters(pendingSpace)
 		}
-		lines = append(lines, line)
+		lines = append(lines, line.String())
 	}
 	return strings.Join(lines, "\n")
 }
 
 func mixedWrapTokens(text string) []wrapToken {
-	clusters := graphemeTokens(text)
-	tokens := make([]wrapToken, 0, len(clusters))
-	for _, cluster := range clusters {
-		r, _ := utf8.DecodeRuneInString(cluster.text)
+	// Most lines contain far fewer semantic runs than bytes. A small initial
+	// capacity avoids reserving dozens of wrapToken structs for every prompt.
+	tokens := make([]wrapToken, 0, min(len(text), 16))
+	runStart := -1
+	runWidth := 0
+	runSpace := false
+	flushRun := func(end int) {
+		if runStart < 0 {
+			return
+		}
+		tokens = append(tokens, wrapToken{
+			text:  text[runStart:end],
+			width: runWidth,
+			space: runSpace,
+		})
+		runStart = -1
+		runWidth = 0
+	}
+	for offset := 0; offset < len(text); {
+		if text[offset] >= ' ' && text[offset] <= '~' {
+			space := text[offset] == ' '
+			end := offset + 1
+			for end < len(text) && text[end] >= ' ' && text[end] <= '~' && (text[end] == ' ') == space {
+				end++
+			}
+			if runStart >= 0 && runSpace != space {
+				flushRun(offset)
+			}
+			if runStart < 0 {
+				runStart = offset
+				runSpace = space
+			}
+			runWidth += end - offset
+			offset = end
+			continue
+		}
+		cluster, width := firstWrapCluster(text[offset:])
+		r, _ := utf8.DecodeRuneInString(cluster)
 		space := unicode.IsSpace(r)
 		breakable := isCJK(r) || r >= utf8.RuneSelf && !unicode.IsLetter(r) && !unicode.IsNumber(r) && !unicode.IsMark(r)
-		if space || breakable {
-			tokens = append(tokens, wrapToken{text: cluster.text, width: cluster.width, space: space})
+		if breakable && !space {
+			flushRun(offset)
+			tokens = append(tokens, wrapToken{text: cluster, width: width})
+			offset += len(cluster)
 			continue
 		}
-		if len(tokens) > 0 && tokens[len(tokens)-1].word {
-			tokens[len(tokens)-1].text += cluster.text
-			tokens[len(tokens)-1].width += cluster.width
-			continue
+		if runStart >= 0 && runSpace != space {
+			flushRun(offset)
 		}
-		tokens = append(tokens, wrapToken{text: cluster.text, width: cluster.width, word: true})
+		if runStart < 0 {
+			runStart = offset
+			runSpace = space
+		}
+		runWidth += width
+		offset += len(cluster)
 	}
+	flushRun(len(text))
 	return tokens
 }
 
-func graphemeTokens(text string) []wrapToken {
-	tokens := make([]wrapToken, 0, len(text))
-	for text != "" {
-		cluster, width := ansi.FirstGraphemeCluster(text, ansi.GraphemeWidth)
-		tokens = append(tokens, wrapToken{text: cluster, width: width})
-		text = text[len(cluster):]
+func firstWrapCluster(text string) (string, int) {
+	if text[0] >= ' ' && text[0] <= '~' {
+		return text[:1], 1
 	}
-	return tokens
+	return ansi.FirstGraphemeCluster(text, ansi.GraphemeWidth)
 }
 
 func isCJK(r rune) bool {

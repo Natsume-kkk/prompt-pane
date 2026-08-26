@@ -43,7 +43,7 @@ try {
 
     $downloadFailure = Format-DownloadFailure `
         -Artifact "Prompt Pane checksum" `
-        -Uri "https://github.com/example/releases/download/v1.1.0/prompt-pane.exe.sha256" `
+        -Uri "https://github.com/example/releases/download/v1.2.0/prompt-pane.exe.sha256" `
         -Reason "synthetic network failure"
     foreach ($expected in @("Prompt Pane checksum", "requested Release and asset", "proxy and TLS", "synthetic network failure")) {
         if (-not $downloadFailure.Contains($expected)) {

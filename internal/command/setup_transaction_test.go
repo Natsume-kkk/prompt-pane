@@ -3,6 +3,7 @@ package command
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -42,5 +43,18 @@ func TestSetupTransactionDoesNotRestoreUnchangedComponents(t *testing.T) {
 	}
 	if err := transaction.rollback(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSetupTransactionRollbackAfterPreservesOperationError(t *testing.T) {
+	operationErr := errors.New("installation failed")
+	rollbackErr := errors.New("restore failed")
+	transaction := &setupTransaction{
+		installChanged: true,
+		restoreInstall: func() error { return rollbackErr },
+	}
+	err := transaction.rollbackAfter(operationErr)
+	if !errors.Is(err, operationErr) || !strings.Contains(err.Error(), "installation rollback failed: restore failed") {
+		t.Fatalf("combined rollback error = %v", err)
 	}
 }

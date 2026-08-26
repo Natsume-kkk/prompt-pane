@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/Natsume-kkk/prompt-pane/internal/filetxn"
 	"github.com/Natsume-kkk/prompt-pane/internal/paths"
 )
 
@@ -91,7 +92,7 @@ func Save(state State) error {
 	if err := os.Chmod(temporaryPath, 0o600); err != nil {
 		return fmt.Errorf("prepare Prompt Pane install state: %w", err)
 	}
-	if err := replaceFile(temporaryPath, path); err != nil {
+	if err := filetxn.Replace(temporaryPath, path); err != nil {
 		return fmt.Errorf("activate Prompt Pane install state: %w", err)
 	}
 	return nil

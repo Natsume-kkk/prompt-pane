@@ -1,9 +1,9 @@
 //go:build !windows
 
-package install
+package filetxn
 
 import "os"
 
-func replaceFile(source, destination string) error {
+func Replace(source, destination string) error {
 	return os.Rename(source, destination)
 }

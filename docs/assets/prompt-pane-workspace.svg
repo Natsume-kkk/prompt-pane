@@ -15,6 +15,8 @@
   <text x="20" y="14" fill="#a6e22e" font-family="Cascadia Mono, Consolas, 'Microsoft YaHei UI', monospace" font-size="14" font-weight="700">┌ prompt-pane ─</text>
   <rect x="758" y="0" width="127" height="18" fill="#1e1e2e"/>
   <text x="763" y="14" fill="#a6e22e" font-family="Cascadia Mono, Consolas, monospace" font-size="13" font-weight="700">SCROLL:  0/240</text>
+  <rect x="908" y="0" width="96" height="18" fill="#1e1e2e"/>
+  <text x="913" y="14" fill="#a6adc8" font-family="Cascadia Mono, Consolas, monospace" font-size="14" font-weight="700">PROMPTS ─</text>
 
   <g clip-path="url(#leftPane)" font-family="Cascadia Mono, Consolas, 'Microsoft YaHei UI', monospace">
     <text x="15" y="37" fill="#cdd6f4" font-size="15">通过。</text>
@@ -58,44 +60,35 @@
   </g>
 
   <g clip-path="url(#rightPane)" font-family="Cascadia Mono, Consolas, 'Microsoft YaHei UI', monospace">
-    <text x="908" y="37" fill="#7f849c" font-size="15">1</text>
-    <text x="936" y="37" fill="#cdd6f4" font-size="15">检查项目文档</text>
+    <text x="908" y="40" fill="#7f849c" font-size="15">1</text>
+    <text x="936" y="40" fill="#cdd6f4" font-size="15">检查 README 的首屏表达</text>
 
-    <text x="908" y="77" fill="#7f849c" font-size="15">2</text>
-    <text x="936" y="77" fill="#cdd6f4" font-size="15">确认安装脚本支持范围</text>
+    <text x="908" y="88" fill="#cdd6f4" font-size="15" font-weight="700">2</text>
+    <text x="936" y="88" fill="#cdd6f4" font-size="15" font-weight="700">统一 1.2.0 版本信息</text>
 
-    <text x="908" y="117" fill="#7f849c" font-size="15">3</text>
-    <text x="936" y="117" fill="#cdd6f4" font-size="15">检查下载失败时的提示</text>
+    <text x="908" y="136" fill="#7f849c" font-size="15">3</text>
+    <text x="936" y="136" fill="#cdd6f4" font-size="15">更新三张公开图片</text>
 
-    <text x="908" y="157" fill="#7f849c" font-size="15">4</text>
-    <text x="936" y="157" fill="#cdd6f4" font-size="15">运行 Windows 构建检查</text>
+    <text x="908" y="184" fill="#cdd6f4" font-size="15" font-weight="700">4</text>
+    <text x="936" y="184" fill="#cdd6f4" font-size="15" font-weight="700">重新跑一遍完整验证</text>
+    <text x="936" y="214" fill="#cba6f7" font-size="14">这活儿正往顺溜了整</text>
+    <text x="1118" y="214" fill="#cba6f7" font-size="14">...</text>
 
-    <text x="908" y="197" fill="#7f849c" font-size="15">5</text>
-    <text x="936" y="197" fill="#cdd6f4" font-size="15">核对 SHA-256</text>
+    <line x1="895" y1="625" x2="1275" y2="625" stroke="#7f849c" stroke-width="1"/>
+    <text x="908" y="650" fill="#f38ba8" font-size="11">main*</text>
+    <text x="944" y="650" fill="#a6e3a1" font-size="11">+12</text>
+    <text x="968" y="650" fill="#f38ba8" font-size="11">-3</text>
+    <text x="987" y="650" fill="#cba6f7" font-size="11">?1</text>
+    <text x="1006" y="650" fill="#cdd6f4" font-size="11">|</text>
+    <text x="1018" y="650" fill="#fab387" font-size="11">Total: 2.4M</text>
+    <text x="1098" y="650" fill="#cdd6f4" font-size="11">|</text>
+    <text x="1110" y="650" fill="#f38ba8" font-size="11">gpt-5.6</text>
+    <text x="1198" y="650" fill="#89dceb" font-size="12">[s] 设置</text>
 
-    <text x="908" y="237" fill="#7f849c" font-size="15">6</text>
-    <text x="936" y="237" fill="#cdd6f4" font-size="15">确认 Hook 信任步骤</text>
-
-    <text x="908" y="277" fill="#7f849c" font-size="15">7</text>
-    <text x="936" y="277" fill="#cdd6f4" font-size="15">检查窄窗口提示词换行</text>
-
-    <text x="908" y="317" fill="#7f849c" font-size="15">8</text>
-    <text x="936" y="317" fill="#cdd6f4" font-size="15">再运行一次完整测试</text>
-
-    <line x1="895" y1="655" x2="1275" y2="655" stroke="#7f849c" stroke-width="1"/>
-    <text x="908" y="679" fill="#a6e3a1" font-size="14" font-weight="700">[LIVE]</text>
-    <text x="970" y="679" fill="#f38ba8" font-size="14">(main)</text>
-    <text x="1027" y="679" fill="#7f849c" font-size="14">|</text>
-    <text x="1045" y="679" fill="#f9e2af" font-size="14">Total: 42.8k</text>
-    <text x="1155" y="679" fill="#89b4fa" font-size="14">h help · t theme</text>
-
-    <text x="908" y="704" fill="#cdd6f4" font-size="13">Limit: 5h:</text>
-    <rect x="994" y="691" width="58" height="16" fill="#f38ba8"/>
-    <rect x="1052" y="691" width="21" height="16" fill="#45475a"/>
-    <text x="1081" y="704" fill="#f38ba8" font-size="13">74%</text>
-    <text x="1117" y="704" fill="#7f849c" font-size="13">| Ctx:</text>
-    <rect x="1174" y="691" width="52" height="16" fill="#a6e3a1"/>
-    <rect x="1226" y="691" width="19" height="16" fill="#45475a"/>
-    <text x="1251" y="704" fill="#a6e3a1" font-size="13">73%</text>
+    <text x="908" y="677" fill="#f5c2e7" font-size="11">5h:</text>
+    <text x="930" y="677" fill="#f9e2af" font-size="11">█████░░░ 66%</text>
+    <text x="1018" y="677" fill="#cdd6f4" font-size="11">|</text>
+    <text x="1030" y="677" fill="#f5c2e7" font-size="11">Ctx: 258k</text>
+    <text x="1097" y="677" fill="#a6e3a1" font-size="11">███░░░░░ 42%</text>
   </g>
 </svg>

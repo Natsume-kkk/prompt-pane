@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Natsume-kkk/prompt-pane/internal/paths"
 	"github.com/Natsume-kkk/prompt-pane/plugins"
 )
 
@@ -101,6 +102,9 @@ func TestCachedPluginFallbackRequiresEnabledMatchingPayload(t *testing.T) {
 		t.Fatal(err)
 	}
 	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	promptPaneHome := t.TempDir()
+	t.Setenv(paths.EnvHome, promptPaneHome)
 	executable := filepath.Join(t.TempDir(), "prompt-pane.exe")
 	if err := os.WriteFile(executable, []byte("current executable"), 0o600); err != nil {
 		t.Fatal(err)
@@ -113,6 +117,13 @@ func TestCachedPluginFallbackRequiresEnabledMatchingPayload(t *testing.T) {
 		t.Fatal(err)
 	}
 	manifest := fmt.Sprintf(`{"name":%q,"version":%q}`, pluginName, version)
+	installedManifest := filepath.Join(promptPaneHome, "codex-marketplace", "plugins", pluginName, ".codex-plugin", "plugin.json")
+	if err := os.MkdirAll(filepath.Dir(installedManifest), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(installedManifest, []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(cache, ".codex-plugin", "plugin.json"), []byte(manifest), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -127,11 +138,17 @@ func TestCachedPluginFallbackRequiresEnabledMatchingPayload(t *testing.T) {
 	if !cachedPluginMatches(executable, home) || !pluginEnabled(home) {
 		t.Fatal("matching enabled plugin was not accepted")
 	}
+	if !PluginInstalledFor(filepath.Join(home, "missing-codex"), executable) {
+		t.Fatal("explicit matching current executable was not accepted")
+	}
 	if err := os.WriteFile(filepath.Join(cache, "bin", "prompt-pane.exe"), []byte("stale executable"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if cachedPluginMatches(executable, home) {
 		t.Fatal("stale cached executable was accepted")
+	}
+	if PluginInstalledFor(filepath.Join(home, "missing-codex"), executable) {
+		t.Fatal("explicit stale executable was accepted")
 	}
 }
 

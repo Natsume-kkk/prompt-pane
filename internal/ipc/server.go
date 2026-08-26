@@ -18,30 +18,35 @@ import (
 type Server struct {
 	run runcontext.Context
 
-	mu        sync.Mutex
-	listener  net.Listener
-	state     string
-	sessionID string
-	stale     map[string]struct{}
-	prompts   []provider.UserPrompt
-	seen      map[string]struct{}
-	notice    string
-	metrics   *provider.SessionMetrics
-	parent    *sessionView
-	viewers   map[net.Conn]struct{}
-	closed    chan struct{}
-	closeOnce sync.Once
+	mu             sync.Mutex
+	listener       net.Listener
+	state          string
+	sessionID      string
+	activeTurnID   string
+	activePromptID string
+	promptSequence uint64
+	stale          map[string]struct{}
+	prompts        []provider.UserPrompt
+	notice         string
+	metrics        *provider.SessionMetrics
+	parent         *sessionView
+	viewers        map[net.Conn]struct{}
+	closed         chan struct{}
+	closeOnce      sync.Once
 }
 
 var snapshotBufferPool = sync.Pool{New: func() any { return new(bytes.Buffer) }}
 
+const maxPooledSnapshotCapacity = 1 << 20
+
 type sessionView struct {
-	state     string
-	sessionID string
-	prompts   []provider.UserPrompt
-	seen      map[string]struct{}
-	notice    string
-	metrics   *provider.SessionMetrics
+	state          string
+	sessionID      string
+	activeTurnID   string
+	activePromptID string
+	prompts        []provider.UserPrompt
+	notice         string
+	metrics        *provider.SessionMetrics
 }
 
 func NewServer(run runcontext.Context) *Server {
@@ -49,7 +54,6 @@ func NewServer(run runcontext.Context) *Server {
 		run:     run,
 		state:   "ready",
 		stale:   make(map[string]struct{}),
-		seen:    make(map[string]struct{}),
 		viewers: make(map[net.Conn]struct{}),
 		closed:  make(chan struct{}),
 	}
@@ -143,17 +147,19 @@ func (s *Server) apply(event provider.Event) bool {
 			return false
 		}
 		sessionChanged := s.sessionID != "" && s.sessionID != event.SessionID
-		// Codex has no side-chat source or exit hook. A different startup while the
-		// parent is still live is the only reliable distinction from a new main chat.
-		if event.Source == provider.SessionSourceStartup && sessionChanged && s.state == "live" && s.parent == nil {
+		// Codex 0.149 marks /side and /btw as ephemeral forks without a transcript.
+		// Persistent /new and /fork startups establish a new main view even while
+		// the previous session remains live.
+		if event.Source == provider.SessionSourceStartup && event.Ephemeral && sessionChanged && s.state == "live" && s.parent == nil {
 			parent := s.captureSessionLocked()
 			s.parent = &parent
 			s.stale[s.sessionID] = struct{}{}
 			delete(s.stale, event.SessionID)
 			s.state = "live"
 			s.sessionID = event.SessionID
+			s.activeTurnID = ""
+			s.activePromptID = ""
 			s.prompts = nil
-			s.seen = make(map[string]struct{})
 			s.notice = ""
 			s.metrics = cloneMetrics(parent.metrics)
 			break
@@ -182,7 +188,15 @@ func (s *Server) apply(event provider.Event) bool {
 		s.sessionID = event.SessionID
 		s.state = "live"
 	case provider.PromptSubmitted:
-		if event.Prompt == nil || s.sessionID == "" {
+		if event.Prompt == nil || event.Prompt.Text == "" || s.sessionID == "" {
+			return false
+		}
+		turnID := strings.TrimSpace(event.TurnID)
+		if turnID == "" {
+			// Accept the pre-split internal event shape during an atomic upgrade.
+			turnID = strings.TrimSpace(event.Prompt.ID)
+		}
+		if turnID == "" {
 			return false
 		}
 		if event.SessionID != s.sessionID {
@@ -196,25 +210,39 @@ func (s *Server) apply(event provider.Event) bool {
 		if s.state == "ended" {
 			return true
 		}
-		if _, exists := s.seen[event.Prompt.ID]; exists {
-			return true
-		}
-		s.seen[event.Prompt.ID] = struct{}{}
-		s.prompts = append(s.prompts, *event.Prompt)
+		prompt := *event.Prompt
+		prompt.ID = s.nextPromptIDLocked()
+		s.prompts = append(s.prompts, prompt)
+		s.activeTurnID = turnID
+		s.activePromptID = prompt.ID
 		s.state = "live"
 		s.notice = ""
-	case provider.MetricsUpdated:
-		if event.Metrics == nil || s.sessionID == "" || event.SessionID != s.sessionID {
+	case provider.TurnCompleted:
+		if strings.TrimSpace(event.TurnID) == "" || s.sessionID == "" {
+			return false
+		}
+		if event.SessionID != s.sessionID {
+			if s.parent != nil && event.SessionID == s.parent.sessionID {
+				if event.TurnID == s.parent.activeTurnID {
+					s.parent.activeTurnID = ""
+					s.parent.activePromptID = ""
+					if event.Metrics != nil {
+						s.parent.metrics = cloneMetrics(event.Metrics)
+					}
+				}
+				return true
+			}
 			_, stale := s.stale[event.SessionID]
-			return event.Metrics != nil && stale
+			return stale
 		}
-		if s.state == "ended" {
+		if s.state == "ended" || event.TurnID != s.activeTurnID {
 			return true
 		}
-		if s.parent != nil {
-			return true
+		s.activeTurnID = ""
+		s.activePromptID = ""
+		if s.parent == nil && event.Metrics != nil {
+			s.metrics = cloneMetrics(event.Metrics)
 		}
-		s.metrics = cloneMetrics(event.Metrics)
 	case provider.SessionEnded:
 		if event.SessionID != s.sessionID {
 			_, stale := s.stale[event.SessionID]
@@ -225,6 +253,8 @@ func (s *Server) apply(event provider.Event) bool {
 			break
 		}
 		s.state = "ended"
+		s.activeTurnID = ""
+		s.activePromptID = ""
 		s.notice = ""
 	default:
 		return false
@@ -236,8 +266,14 @@ func (s *Server) apply(event provider.Event) bool {
 func (s *Server) resetSessionLocked(notice string) {
 	s.prompts = nil
 	s.metrics = nil
-	s.seen = make(map[string]struct{})
+	s.activeTurnID = ""
+	s.activePromptID = ""
 	s.notice = notice
+}
+
+func (s *Server) nextPromptIDLocked() string {
+	s.promptSequence++
+	return fmt.Sprintf("prompt-%d", s.promptSequence)
 }
 
 func (s *Server) restoreParentLocked() {
@@ -251,30 +287,24 @@ func (s *Server) restoreParentLocked() {
 
 func (s *Server) captureSessionLocked() sessionView {
 	return sessionView{
-		state:     s.state,
-		sessionID: s.sessionID,
-		prompts:   append([]provider.UserPrompt(nil), s.prompts...),
-		seen:      cloneSeen(s.seen),
-		notice:    s.notice,
-		metrics:   cloneMetrics(s.metrics),
+		state:          s.state,
+		sessionID:      s.sessionID,
+		activeTurnID:   s.activeTurnID,
+		activePromptID: s.activePromptID,
+		prompts:        append([]provider.UserPrompt(nil), s.prompts...),
+		notice:         s.notice,
+		metrics:        cloneMetrics(s.metrics),
 	}
 }
 
 func (s *Server) restoreSessionLocked(view sessionView) {
 	s.state = view.state
 	s.sessionID = view.sessionID
+	s.activeTurnID = view.activeTurnID
+	s.activePromptID = view.activePromptID
 	s.prompts = append([]provider.UserPrompt(nil), view.prompts...)
-	s.seen = cloneSeen(view.seen)
 	s.notice = view.notice
 	s.metrics = cloneMetrics(view.metrics)
-}
-
-func cloneSeen(source map[string]struct{}) map[string]struct{} {
-	copy := make(map[string]struct{}, len(source))
-	for id := range source {
-		copy[id] = struct{}{}
-	}
-	return copy
 }
 
 func cloneMetrics(metrics *provider.SessionMetrics) *provider.SessionMetrics {
@@ -282,6 +312,7 @@ func cloneMetrics(metrics *provider.SessionMetrics) *provider.SessionMetrics {
 		return nil
 	}
 	copy := *metrics
+	copy.Quotas = append([]provider.QuotaWindow(nil), metrics.Quotas...)
 	return &copy
 }
 
@@ -297,7 +328,14 @@ func (s *Server) addViewer(conn net.Conn) {
 
 func (s *Server) snapshotLocked() Snapshot {
 	prompts := append([]provider.UserPrompt(nil), s.prompts...)
-	return Snapshot{State: s.state, Prompts: prompts, Notice: s.notice, Metrics: cloneMetrics(s.metrics)}
+	return Snapshot{
+		State:          s.state,
+		Prompts:        prompts,
+		Notice:         s.notice,
+		ActiveTurnID:   s.activeTurnID,
+		ActivePromptID: s.activePromptID,
+		Metrics:        cloneMetrics(s.metrics),
+	}
 }
 
 func (s *Server) broadcastLocked() {
@@ -322,18 +360,25 @@ func writeSnapshot(conn net.Conn, snapshot Snapshot) error {
 func withEncodedSnapshot(snapshot Snapshot, consume func([]byte) error) error {
 	buffer := snapshotBufferPool.Get().(*bytes.Buffer)
 	buffer.Reset()
-	defer func() {
-		// Pooled capacity may be reused, but prompt bytes must not survive as cached content.
-		clear(buffer.Bytes())
-		buffer.Reset()
-		if buffer.Cap() <= 1<<20 {
-			snapshotBufferPool.Put(buffer)
-		}
-	}()
+	defer recycleSnapshotBuffer(buffer)
 	if err := json.NewEncoder(buffer).Encode(snapshot); err != nil {
 		return err
 	}
 	return consume(buffer.Bytes())
+}
+
+func recycleSnapshotBuffer(buffer *bytes.Buffer) {
+	data := buffer.Bytes()
+	if buffer.Cap() <= maxPooledSnapshotCapacity {
+		// Clear the full reusable allocation, including bytes beyond the latest
+		// snapshot length that may still contain an older prompt.
+		clear(data[:buffer.Cap()])
+		buffer.Reset()
+		snapshotBufferPool.Put(buffer)
+		return
+	}
+	clear(data)
+	buffer.Reset()
 }
 
 func writeEncodedSnapshot(conn net.Conn, encoded []byte) error {

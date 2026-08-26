@@ -21,12 +21,26 @@ func TestCodexAliasPreservesInternalInvocations(t *testing.T) {
 	for _, arguments := range [][]string{
 		{"_agent", "codex", "--", "resume"},
 		{"_hook", "codex"},
+		{"_observe", "codex", "thr", "turn", "0", `C:\synthetic\current.jsonl`},
 		{"_view"},
 		{"_prepare", "codex"},
 		{"_activate", "codex"},
 	} {
 		if got := invocationArgs(`C:\Users\tester\AppData\Roaming\npm\codex.pp.exe`, arguments); !reflect.DeepEqual(got, arguments) {
 			t.Fatalf("arguments = %#v, want %#v", got, arguments)
+		}
+	}
+}
+
+func TestHookAndObserverInheritWorkspaceProcessLifetime(t *testing.T) {
+	for _, arguments := range [][]string{{"_hook", "codex"}, {"_observe", "codex", "thr", "turn", "0", "current.jsonl"}} {
+		if ownsProcessLifetime(arguments) {
+			t.Fatalf("internal leaf unexpectedly owns a process lifetime: %#v", arguments)
+		}
+	}
+	for _, arguments := range [][]string{{"codex"}, {"setup", "codex"}, {"_agent", "codex"}, {"_view"}} {
+		if !ownsProcessLifetime(arguments) {
+			t.Fatalf("lifetime owner was skipped: %#v", arguments)
 		}
 	}
 }

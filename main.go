@@ -11,11 +11,13 @@ import (
 )
 
 func main() {
-	if err := runcontext.EnsureProcessLifetime(); err != nil {
-		fmt.Fprintln(os.Stderr, "prompt-pane:", err)
-		os.Exit(1)
-	}
 	args := invocationArgs(os.Args[0], os.Args[1:])
+	if ownsProcessLifetime(args) {
+		if err := runcontext.EnsureProcessLifetime(); err != nil {
+			fmt.Fprintln(os.Stderr, "prompt-pane:", err)
+			os.Exit(1)
+		}
+	}
 	managed, err := launcher.IsManagedInvocation(os.Args[0])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "prompt-pane:", err)
@@ -39,9 +41,16 @@ func isInternalInvocation(args []string) bool {
 		return false
 	}
 	switch args[0] {
-	case "_agent", "_hook", "_view", "_prepare", "_activate":
+	case "_agent", "_hook", "_observe", "_view", "_prepare", "_activate":
 		return true
 	default:
 		return false
 	}
+}
+
+func ownsProcessLifetime(args []string) bool {
+	if len(args) == 0 {
+		return true
+	}
+	return args[0] != "_hook" && args[0] != "_observe"
 }

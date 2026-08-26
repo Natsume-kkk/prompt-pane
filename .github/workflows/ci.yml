@@ -80,7 +80,7 @@ jobs:
       - name: Verify version and checksum
         run: |
           $version = & .\dist\prompt-pane.exe version
-          if ($version -ne 'prompt-pane 1.1.0') {
+          if ($version -ne 'prompt-pane 1.2.0') {
             Write-Error "Unexpected version output: $version"
             exit 1
           }

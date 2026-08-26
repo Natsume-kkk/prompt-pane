@@ -3,7 +3,7 @@ package codex
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,17 +12,46 @@ import (
 	"github.com/Natsume-kkk/prompt-pane/internal/provider"
 )
 
+func decodeHook(r io.Reader) (provider.Event, error) {
+	event, _, err := DecodeHookWithObservation(r)
+	return event, err
+}
+
 func TestDecodePrompt(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("testdata", "hook-user-prompt-submit.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	event, err := DecodeHook(strings.NewReader(string(data)))
+	event, err := decodeHook(strings.NewReader(string(data)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if event.Kind != provider.PromptSubmitted || event.Prompt == nil || event.Prompt.ID != "turn_1" || event.Prompt.Text != "中文\nsecond line" {
+	if event.Kind != provider.PromptSubmitted || event.TurnID != "turn_1" || event.Prompt == nil || event.Prompt.ID != "turn_1" || event.Prompt.Text != "中文\nsecond line" {
 		t.Fatalf("unexpected event: %#v", event)
+	}
+}
+
+func TestDecodePromptReturnsExactTurnObservation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "current.jsonl")
+	input, err := json.Marshal(map[string]string{
+		"session_id":      "thr_exact",
+		"turn_id":         "turn_exact",
+		"hook_event_name": "UserPromptSubmit",
+		"prompt":          "synthetic prompt",
+		"transcript_path": path,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, observation, err := DecodeHookWithObservation(bytes.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.Kind != provider.PromptSubmitted || observation == nil {
+		t.Fatalf("event = %#v, observation = %#v", event, observation)
+	}
+	if observation.SessionID != "thr_exact" || observation.TurnID != "turn_exact" || observation.TranscriptPath != path || observation.Offset != 0 {
+		t.Fatalf("observation = %#v", observation)
 	}
 }
 
@@ -42,7 +71,7 @@ func TestDecodeSessionLifecycleFixtures(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		event, err := DecodeHook(strings.NewReader(string(data)))
+		event, err := decodeHook(strings.NewReader(string(data)))
 		if err != nil || event.Kind != test.kind || event.SessionID != "thr_synthetic" {
 			t.Fatalf("%s: %#v, %v", test.name, event, err)
 		}
@@ -52,14 +81,25 @@ func TestDecodeSessionLifecycleFixtures(t *testing.T) {
 	}
 }
 
-func TestSessionStartIgnoresTranscriptPath(t *testing.T) {
+func TestSessionStartClassifiesPersistentWithoutRetainingTranscriptPath(t *testing.T) {
 	input := `{"session_id":"thr_123","hook_event_name":"SessionStart","source":"startup","transcript_path":"C:\\synthetic\\current.jsonl"}`
-	event, err := DecodeHook(strings.NewReader(input))
+	event, err := decodeHook(strings.NewReader(input))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if event.Source != "startup" {
-		t.Fatalf("startup source = %q", event.Source)
+	if event.Source != "startup" || event.Ephemeral {
+		t.Fatalf("persistent startup = %#v", event)
+	}
+}
+
+func TestSessionStartClassifiesMissingTranscriptAsEphemeral(t *testing.T) {
+	input := `{"session_id":"thr_side","hook_event_name":"SessionStart","source":"startup","transcript_path":null}`
+	event, err := decodeHook(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !event.Ephemeral {
+		t.Fatalf("ephemeral startup = %#v", event)
 	}
 }
 
@@ -71,7 +111,7 @@ func TestSessionStartAcceptsOfficialSources(t *testing.T) {
 		provider.SessionSourceCompact,
 	} {
 		input := `{"session_id":"thr_123","hook_event_name":"SessionStart","source":"` + source + `"}`
-		event, err := DecodeHook(strings.NewReader(input))
+		event, err := decodeHook(strings.NewReader(input))
 		if err != nil || event.Source != source {
 			t.Fatalf("source %q: event = %#v, err = %v", source, event, err)
 		}
@@ -80,14 +120,14 @@ func TestSessionStartAcceptsOfficialSources(t *testing.T) {
 
 func TestSessionStartRejectsUnsupportedSource(t *testing.T) {
 	input := `{"session_id":"thr_123","hook_event_name":"SessionStart","source":"fork"}`
-	if _, err := DecodeHook(strings.NewReader(input)); err == nil {
+	if _, err := decodeHook(strings.NewReader(input)); err == nil {
 		t.Fatal("expected unsupported source error")
 	}
 }
 
 func TestDecodeHookRejectsPromptWithoutLeakingIt(t *testing.T) {
 	secret := "never-print-this"
-	_, err := DecodeHook(strings.NewReader(`{"session_id":"thr_123","hook_event_name":"UserPromptSubmit","prompt":"` + secret + `"}`))
+	_, err := decodeHook(strings.NewReader(`{"session_id":"thr_123","hook_event_name":"UserPromptSubmit","prompt":"` + secret + `"}`))
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
@@ -97,7 +137,7 @@ func TestDecodeHookRejectsPromptWithoutLeakingIt(t *testing.T) {
 }
 
 func TestDecodeHookRejectsOversizedInput(t *testing.T) {
-	_, err := DecodeHook(strings.NewReader(strings.Repeat("x", MaxHookInput+1)))
+	_, err := decodeHook(strings.NewReader(strings.Repeat("x", MaxHookInput+1)))
 	if err == nil {
 		t.Fatal("expected size error")
 	}
@@ -105,7 +145,7 @@ func TestDecodeHookRejectsOversizedInput(t *testing.T) {
 
 func TestDecodeHookRejectsTrailingJSON(t *testing.T) {
 	input := `{"session_id":"thr_123","hook_event_name":"SessionStart"}{"extra":true}`
-	if _, err := DecodeHook(strings.NewReader(input)); err == nil {
+	if _, err := decodeHook(strings.NewReader(input)); err == nil {
 		t.Fatal("expected trailing JSON error")
 	}
 }
@@ -121,40 +161,52 @@ func TestDecodeStopReadsOnlyCurrentTranscriptMetrics(t *testing.T) {
 		t.Fatal(err)
 	}
 	input, err := json.Marshal(map[string]string{
-		"session_id": "thr_exact", "hook_event_name": "Stop", "transcript_path": path,
+		"session_id": "thr_exact", "turn_id": "turn_exact", "hook_event_name": "Stop", "transcript_path": path,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	event, err := DecodeHook(bytes.NewReader(input))
+	event, err := decodeHook(bytes.NewReader(input))
 	if err != nil {
 		t.Fatal(err)
 	}
 	metrics := event.Metrics
-	if event.Kind != provider.MetricsUpdated || metrics == nil || metrics.Model != "gpt-5.4" || metrics.Effort != "high" || metrics.TotalTokens != 1250 || metrics.ContextWindow != 128000 || metrics.ContextUsedPercent != 25 {
+	if event.Kind != provider.TurnCompleted || event.TurnID != "turn_exact" || metrics == nil || metrics.Model != "gpt-5.4" || metrics.Effort != "high" || metrics.TotalTokens != 1250 || metrics.ContextWindow != 128000 || metrics.ContextUsedPercent != 25 {
 		t.Fatalf("metrics event = %#v", event)
 	}
-	if metrics.FiveHour == nil || metrics.FiveHour.UsedPercent != 25 || metrics.SevenDay == nil || metrics.SevenDay.UsedPercent != 50 {
+	if metrics.QuotaStatus != provider.QuotaAvailable || len(metrics.Quotas) != 2 || metrics.Quotas[0].WindowMinutes != 300 || metrics.Quotas[0].UsedPercent != 25 || metrics.Quotas[1].WindowMinutes != 10080 || metrics.Quotas[1].UsedPercent != 50 {
 		t.Fatalf("quota metrics = %#v", metrics)
 	}
 }
 
-func TestDecodeStopRejectsTranscriptFromAnotherSession(t *testing.T) {
+func TestDecodeStopCompletesWhenTranscriptBelongsToAnotherSession(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "other.jsonl")
 	if err := os.WriteFile(path, []byte(`{"type":"session_meta","payload":{"id":"thr_other"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	input, _ := json.Marshal(map[string]string{
-		"session_id": "thr_current", "hook_event_name": "Stop", "transcript_path": path,
+		"session_id": "thr_current", "turn_id": "turn_current", "hook_event_name": "Stop", "transcript_path": path,
 	})
-	if _, err := DecodeHook(bytes.NewReader(input)); !errors.Is(err, ErrMetricsUnavailable) {
-		t.Fatalf("mismatched transcript error = %v", err)
+	event, err := decodeHook(bytes.NewReader(input))
+	if err != nil || event.Kind != provider.TurnCompleted || event.TurnID != "turn_current" || event.Metrics != nil {
+		t.Fatalf("mismatched transcript completion = %#v, %v", event, err)
 	}
 }
 
-func TestDecodeStopWithoutTranscriptReportsUnavailableMetrics(t *testing.T) {
+func TestDecodeStopWithoutTranscriptStillCompletes(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "hook-stop.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, err := decodeHook(bytes.NewReader(data))
+	if err != nil || event.Kind != provider.TurnCompleted || event.TurnID != "turn_synthetic" || event.Metrics != nil {
+		t.Fatalf("missing transcript completion = %#v, %v", event, err)
+	}
+}
+
+func TestDecodeStopRequiresTurnID(t *testing.T) {
 	input := `{"session_id":"thr_current","hook_event_name":"Stop","transcript_path":null}`
-	if _, err := DecodeHook(strings.NewReader(input)); !errors.Is(err, ErrMetricsUnavailable) {
-		t.Fatalf("missing transcript error = %v", err)
+	if _, err := decodeHook(strings.NewReader(input)); err == nil {
+		t.Fatal("Stop without turn_id was accepted")
 	}
 }

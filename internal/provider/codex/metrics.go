@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -35,12 +36,15 @@ type transcriptRecord struct {
 			} `json:"last_token_usage"`
 			ModelContextWindow int64 `json:"model_context_window"`
 		} `json:"info"`
-		RateLimits struct {
-			LimitID   string           `json:"limit_id"`
-			Primary   *rateLimitBucket `json:"primary"`
-			Secondary *rateLimitBucket `json:"secondary"`
-		} `json:"rate_limits"`
+		RateLimits          *rateLimitSnapshot           `json:"rate_limits"`
+		RateLimitsByLimitID map[string]rateLimitSnapshot `json:"rate_limits_by_limit_id"`
 	} `json:"payload"`
+}
+
+type rateLimitSnapshot struct {
+	LimitID   string           `json:"limit_id"`
+	Primary   *rateLimitBucket `json:"primary"`
+	Secondary *rateLimitBucket `json:"secondary"`
 }
 
 type rateLimitBucket struct {
@@ -52,7 +56,7 @@ type rateLimitBucket struct {
 func readMetrics(path, expectedSessionID, hookCWD, hookModel string) (*provider.SessionMetrics, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("open current transcript: %w", err)
+		return nil, fmt.Errorf("open current transcript")
 	}
 	defer file.Close()
 
@@ -95,36 +99,54 @@ func readMetrics(path, expectedSessionID, hookCWD, hookModel string) (*provider.
 			if window > 0 {
 				metrics.ContextUsedPercent = float64(record.Payload.Info.LastTokenUsage.InputTokens) * 100 / float64(window)
 			}
-			if record.Payload.RateLimits.LimitID != "codex" {
-				continue
-			}
-			metrics.FiveHour = nil
-			metrics.SevenDay = nil
-			for _, limit := range []*rateLimitBucket{record.Payload.RateLimits.Primary, record.Payload.RateLimits.Secondary} {
-				if limit == nil {
-					continue
-				}
-				usedPercent := limit.UsedPercent
-				if limit.ResetsAt > 0 && limit.ResetsAt <= time.Now().Unix() {
-					usedPercent = 0
-				}
-				quota := &provider.QuotaWindow{UsedPercent: usedPercent, ResetsAt: limit.ResetsAt}
-				if limit.WindowMinutes < 24*60 {
-					metrics.FiveHour = quota
-				} else {
-					metrics.SevenDay = quota
-				}
-			}
+			limits, status := activeRateLimits(record.Payload.RateLimits, record.Payload.RateLimitsByLimitID)
+			metrics.Quotas = quotaWindows(limits, time.Now())
+			metrics.QuotaStatus = status
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read current transcript: %w", err)
+		return nil, fmt.Errorf("read current transcript")
 	}
 	if transcriptSessionID == "" || transcriptSessionID != expectedSessionID {
 		return nil, fmt.Errorf("current transcript does not match the active session")
 	}
 	addGitMetrics(metrics, cwd)
 	return metrics, nil
+}
+
+func activeRateLimits(single *rateLimitSnapshot, byID map[string]rateLimitSnapshot) (*rateLimitSnapshot, provider.QuotaStatus) {
+	if limits, ok := byID["codex"]; ok {
+		return &limits, provider.QuotaAvailable
+	}
+	if single != nil && single.LimitID == "codex" && (single.Primary != nil || single.Secondary != nil) {
+		return single, provider.QuotaAvailable
+	}
+	return nil, provider.QuotaUnavailable
+}
+
+func quotaWindows(limits *rateLimitSnapshot, now time.Time) []provider.QuotaWindow {
+	if limits == nil {
+		return nil
+	}
+	quotas := make([]provider.QuotaWindow, 0, 2)
+	for _, limit := range []*rateLimitBucket{limits.Primary, limits.Secondary} {
+		if limit == nil || limit.WindowMinutes <= 0 {
+			continue
+		}
+		usedPercent := limit.UsedPercent
+		if limit.ResetsAt > 0 && limit.ResetsAt <= now.Unix() {
+			usedPercent = 0
+		}
+		quotas = append(quotas, provider.QuotaWindow{
+			WindowMinutes: limit.WindowMinutes,
+			UsedPercent:   usedPercent,
+			ResetsAt:      limit.ResetsAt,
+		})
+	}
+	sort.SliceStable(quotas, func(i, j int) bool {
+		return quotas[i].WindowMinutes < quotas[j].WindowMinutes
+	})
+	return quotas
 }
 
 func addGitMetrics(metrics *provider.SessionMetrics, cwd string) {

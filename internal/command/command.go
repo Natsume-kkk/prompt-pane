@@ -3,7 +3,6 @@ package command
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,6 +15,7 @@ import (
 
 	runtimeinstall "github.com/Natsume-kkk/prompt-pane/internal/install"
 	"github.com/Natsume-kkk/prompt-pane/internal/ipc"
+	"github.com/Natsume-kkk/prompt-pane/internal/provider"
 	"github.com/Natsume-kkk/prompt-pane/internal/provider/codex"
 	runcontext "github.com/Natsume-kkk/prompt-pane/internal/run"
 	"github.com/Natsume-kkk/prompt-pane/internal/setupui"
@@ -31,6 +31,8 @@ const (
 	hookRunEnvironmentExitCode = 10
 	hookInputExitCode          = 11
 	hookIPCExitCode            = 12
+	turnObservationTimeout     = 24 * time.Hour
+	stopHookFallbackDelay      = 3500 * time.Millisecond
 )
 
 type App struct {
@@ -56,9 +58,9 @@ func (a App) Execute(args []string) int {
 		if len(args) != 2 || args[1] != "codex" {
 			return a.usageError("usage: prompt-pane setup codex")
 		}
-		return a.setupCodex()
+		return a.setupVersionedCodex()
 	case "doctor":
-		return a.doctor()
+		return a.checkEnvironment(false)
 	case "teardown":
 		if len(args) != 2 || args[1] != "codex" {
 			return a.usageError("usage: prompt-pane teardown codex")
@@ -74,6 +76,8 @@ func (a App) Execute(args []string) int {
 		return a.agent(args[1:])
 	case "_hook":
 		return a.hook(args[1:])
+	case "_observe":
+		return a.observe(args[1:])
 	case "_view":
 		return a.view()
 	case "_prepare":
@@ -144,10 +148,6 @@ func (a App) launchCodex(codexArgs []string) int {
 	return 0
 }
 
-func (a App) setupCodex() int {
-	return a.setupVersionedCodex()
-}
-
 func writeSetupCompletion(out io.Writer, firstInstall bool) {
 	fmt.Fprintln(out, "Setup complete.")
 	if !firstInstall {
@@ -198,7 +198,7 @@ func (a App) ensureCodexSetup(codexPath, executable string, beforeLaunch bool, p
 	if !aliasReady {
 		fmt.Fprintf(a.Out, "- codex.pp at %s\n", aliasPath)
 	}
-	completion := setupAnimationMode(beforeLaunch, aliasManaged)
+	completion := setupCompletionMode(beforeLaunch, aliasManaged)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
@@ -208,7 +208,10 @@ func (a App) ensureCodexSetup(codexPath, executable string, beforeLaunch bool, p
 	}
 	defer transaction.discard()
 	steps := setupStepCount(zellijReady, pluginReady, aliasReady)
-	initial := setupui.Progress{Step: 1, Steps: steps, Stage: "Checking environment", Percent: setupPercent(1, steps, 0)}
+	initial := setupui.Progress{
+		Step: 1, Steps: steps, Stage: "Checking environment",
+		Plan: setupPlan(zellijReady, pluginReady, aliasReady),
+	}
 	err = setupui.Run(a.Out, completion, initial, func(report setupui.Reporter) error {
 		step := 1
 		if !zellijReady {
@@ -226,11 +229,11 @@ func (a App) ensureCodexSetup(codexPath, executable string, beforeLaunch bool, p
 				return err
 			}
 		}
-		report(setupui.Progress{Step: step, Steps: steps, Stage: "Environment ready", Percent: setupPercent(step, steps, 100)})
+		report(setupui.Progress{Step: step, Steps: steps, Stage: "Environment ready"})
 
 		if !zellijReady {
 			step++
-			report(setupui.Progress{Step: step, Steps: steps, Stage: "Downloading Zellij", Percent: setupPercent(step, steps, 0)})
+			report(setupui.Progress{Step: step, Steps: steps, Stage: "Downloading Zellij"})
 			lastReport := time.Time{}
 			lastPercent := -1
 			_, err := zellij.InstallManagedWithProgress(ctx, func(downloaded, total int64) {
@@ -238,46 +241,45 @@ func (a App) ensureCodexSetup(codexPath, executable string, beforeLaunch bool, p
 				if total > 0 {
 					stagePercent = int(min(downloaded, total) * 100 / total)
 				}
-				percent := setupPercent(step, steps, stagePercent)
 				now := time.Now()
-				if percent == lastPercent && now.Sub(lastReport) < 200*time.Millisecond && downloaded != total {
+				if stagePercent == lastPercent && now.Sub(lastReport) < 200*time.Millisecond && downloaded != total {
 					return
 				}
-				lastPercent = percent
+				lastPercent = stagePercent
 				lastReport = now
 				report(setupui.Progress{
-					Step: step, Steps: steps, Stage: "Downloading Zellij", Percent: percent,
+					Step: step, Steps: steps, Stage: "Downloading Zellij",
 					Downloaded: downloaded, Total: total,
 				})
 			})
 			if err != nil {
 				return err
 			}
-			report(setupui.Progress{Step: step, Steps: steps, Stage: "Zellij ready", Percent: setupPercent(step, steps, 100)})
+			report(setupui.Progress{Step: step, Steps: steps, Stage: "Zellij ready"})
 		}
 
 		if !pluginReady {
 			step++
-			report(setupui.Progress{Step: step, Steps: steps, Stage: "Installing Codex plugin", Percent: setupPercent(step, steps, 0)})
+			report(setupui.Progress{Step: step, Steps: steps, Stage: "Installing Codex plugin"})
 			transaction.pluginChanged = true
 			if err := codex.InstallPlugin(codexPath); err != nil {
 				return err
 			}
-			report(setupui.Progress{Step: step, Steps: steps, Stage: "Codex plugin ready", Percent: setupPercent(step, steps, 100)})
+			report(setupui.Progress{Step: step, Steps: steps, Stage: "Codex plugin ready"})
 		}
 
 		if !aliasReady {
 			step++
-			report(setupui.Progress{Step: step, Steps: steps, Stage: "Installing codex.pp", Percent: setupPercent(step, steps, 0)})
+			report(setupui.Progress{Step: step, Steps: steps, Stage: "Installing codex.pp"})
 			transaction.aliasChanged = true
 			if _, err := shortcut.Install(codexPath, executable); err != nil {
 				return err
 			}
-			report(setupui.Progress{Step: step, Steps: steps, Stage: "codex.pp ready", Percent: setupPercent(step, steps, 100)})
+			report(setupui.Progress{Step: step, Steps: steps, Stage: "codex.pp ready"})
 		}
 
 		step++
-		report(setupui.Progress{Step: step, Steps: steps, Stage: "Verifying installation", Percent: setupPercent(step, steps, 0)})
+		report(setupui.Progress{Step: step, Steps: steps, Stage: "Verifying installation"})
 		if _, err := zellij.Find(); err != nil {
 			return fmt.Errorf("verify Zellij installation: %w", err)
 		}
@@ -290,14 +292,11 @@ func (a App) ensureCodexSetup(codexPath, executable string, beforeLaunch bool, p
 			}
 			return fmt.Errorf("verify codex.pp installation")
 		}
-		report(setupui.Progress{Step: step, Steps: steps, Stage: "Installation verified", Percent: setupPercent(step, steps, 100)})
+		report(setupui.Progress{Step: step, Steps: steps, Stage: "Installation verified"})
 		return nil
 	})
 	if err != nil {
-		if rollbackErr := transaction.rollback(); rollbackErr != nil {
-			return false, fmt.Errorf("%w; installation rollback failed: %v", err, rollbackErr)
-		}
-		return false, err
+		return false, transaction.rollbackAfter(err)
 	}
 	return true, nil
 }
@@ -314,10 +313,6 @@ func acquireExclusiveWorkspace() (func(), error) {
 		return nil, err
 	}
 	return func() { _ = lock.Close() }, nil
-}
-
-func (a App) doctor() int {
-	return a.checkEnvironment(false)
 }
 
 func (a App) checkEnvironment(afterSetup bool) int {
@@ -342,6 +337,7 @@ func (a App) checkEnvironment(afterSetup bool) int {
 		fmt.Fprintf(a.Out, "[OK]   PowerShell %s: %s\n", shell.Version, shell.Path)
 	}
 	executable, executableErr := os.Executable()
+	pluginExecutable := executable
 	if executableErr != nil {
 		fmt.Fprintln(a.Out, "[FAIL] Prompt Pane executable: cannot locate the current program")
 		ok = false
@@ -362,6 +358,7 @@ func (a App) checkEnvironment(afterSetup bool) int {
 			fmt.Fprintln(a.Out, "[FAIL] Prompt Pane current version: missing or invalid")
 			ok = false
 		} else {
+			pluginExecutable = currentPath
 			fmt.Fprintf(a.Out, "[OK]   Prompt Pane current version: %s at %s\n", runtimeinstall.ReleaseLabel(*installState.Current), currentPath)
 		}
 		if installState.Pending != nil {
@@ -391,7 +388,7 @@ func (a App) checkEnvironment(afterSetup bool) int {
 		prerequisitesReady = false
 	} else {
 		fmt.Fprintf(a.Out, "[OK]   Codex CLI: %s\n", codexPath)
-		if codex.PluginInstalled(codexPath) {
+		if pluginExecutable != "" && codex.PluginInstalledFor(codexPath, pluginExecutable) {
 			fmt.Fprintln(a.Out, "[OK]   Codex plugin: installed and enabled")
 		} else {
 			fmt.Fprintln(a.Out, "[FAIL] Codex plugin: not installed or disabled")
@@ -448,12 +445,21 @@ func setupStepCount(zellijReady, pluginReady, aliasReady bool) int {
 	return steps
 }
 
-func setupPercent(step, steps, stagePercent int) int {
-	stagePercent = min(100, max(0, stagePercent))
-	return ((step-1)*100 + stagePercent) / steps
+func setupPlan(zellijReady, pluginReady, aliasReady bool) []string {
+	plan := []string{"Environment"}
+	if !zellijReady {
+		plan = append(plan, "Zellij "+zellij.Version)
+	}
+	if !pluginReady {
+		plan = append(plan, "Codex plugin")
+	}
+	if !aliasReady {
+		plan = append(plan, "codex.pp")
+	}
+	return append(plan, "Installation verification")
 }
 
-func setupAnimationMode(beforeLaunch, aliasManaged bool) setupui.CompletionMode {
+func setupCompletionMode(beforeLaunch, aliasManaged bool) setupui.CompletionMode {
 	if beforeLaunch {
 		return setupui.RepairCompletion
 	}
@@ -524,19 +530,67 @@ func (a App) hook(args []string) int {
 	if err != nil {
 		return a.failCode(hookRunEnvironmentExitCode, "Prompt Pane hook is not attached to an active run")
 	}
-	event, err := codex.DecodeHook(a.In)
+	event, observation, err := codex.DecodeHookWithObservation(a.In)
 	if err != nil {
-		if errors.Is(err, codex.ErrMetricsUnavailable) {
-			return 0
-		}
 		return a.failCode(hookInputExitCode, err.Error())
+	}
+	if observation != nil {
+		prepared, prepareErr := codex.PrepareTurnObservation(*observation)
+		if prepareErr == nil {
+			observation = &prepared
+		} else {
+			observation = nil
+		}
 	}
 	ctx, cancel := ipc.HookContext()
 	defer cancel()
 	if err := ipc.SendEvent(ctx, run, event); err != nil {
 		return a.failCode(hookIPCExitCode, "Prompt Pane hook could not reach the local viewer")
 	}
+	if observation != nil {
+		if executable, executableErr := os.Executable(); executableErr == nil {
+			_ = codex.StartTurnObserver(executable, *observation)
+		}
+	}
 	return 0
+}
+
+func (a App) observe(args []string) int {
+	run, err := runcontext.FromEnvironment()
+	if err != nil {
+		return 0
+	}
+	observation, err := codex.ParseTurnObservation(args)
+	if err != nil {
+		return 0
+	}
+	_ = observeTurn(run, observation)
+	return 0
+}
+
+func observeTurn(run runcontext.Context, observation codex.TurnObservation) error {
+	ctx, cancel := context.WithTimeout(context.Background(), turnObservationTimeout)
+	defer cancel()
+	end, err := codex.WaitForTurnEnd(ctx, observation)
+	if err != nil {
+		return err
+	}
+	if end == codex.TurnEndComplete {
+		timer := time.NewTimer(stopHookFallbackDelay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	sendContext, sendCancel := ipc.HookContext()
+	defer sendCancel()
+	return ipc.SendEvent(sendContext, run, provider.Event{
+		Kind:      provider.TurnCompleted,
+		SessionID: observation.SessionID,
+		TurnID:    observation.TurnID,
+	})
 }
 
 func (a App) view() int {

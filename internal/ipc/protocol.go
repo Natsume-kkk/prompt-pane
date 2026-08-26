@@ -20,8 +20,10 @@ type Response struct {
 }
 
 type Snapshot struct {
-	State   string                   `json:"state"`
-	Prompts []provider.UserPrompt    `json:"prompts"`
-	Notice  string                   `json:"notice"`
-	Metrics *provider.SessionMetrics `json:"metrics,omitempty"`
+	State          string                   `json:"state"`
+	Prompts        []provider.UserPrompt    `json:"prompts"`
+	Notice         string                   `json:"notice"`
+	ActiveTurnID   string                   `json:"active_turn_id,omitempty"`
+	ActivePromptID string                   `json:"active_prompt_id,omitempty"`
+	Metrics        *provider.SessionMetrics `json:"metrics,omitempty"`
 }

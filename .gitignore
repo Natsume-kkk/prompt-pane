@@ -4,6 +4,7 @@
 /prompt-pane
 /prompt-pane.exe
 *.test
+*.test.exe
 *.out
 
 # Local runtime state and generated layouts

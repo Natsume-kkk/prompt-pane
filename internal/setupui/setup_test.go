@@ -3,156 +3,25 @@ package setupui
 import (
 	"bytes"
 	"fmt"
-	"slices"
 	"strings"
 	"testing"
-	"time"
 	"unicode/utf8"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
-func TestLogoVariantsFitTheirWidth(t *testing.T) {
-	for _, test := range []struct {
-		width   int
-		variant string
-	}{
-		{width: 120, variant: "wide"},
-		{width: 80, variant: "normal"},
-		{width: 40, variant: "compact"},
-	} {
-		variant, cells, logoWidth := logoForWidth(test.width)
-		if variant != test.variant {
-			t.Fatalf("width %d variant = %q", test.width, variant)
-		}
-		if len(cells) == 0 || logoWidth > test.width {
-			t.Fatalf("width %d logo width = %d, cells = %d", test.width, logoWidth, len(cells))
-		}
-	}
-}
-
-func TestLogoUsesTextAsNegativeSpace(t *testing.T) {
-	_, cells, _ := logoForWidth(80)
-	occupied := make(map[cell]bool, len(cells))
-	for _, cell := range cells {
-		occupied[cell] = true
-	}
-
-	if !occupied[cell{x: 0, y: 0}] {
-		t.Fatal("plaque background is missing its outer corner")
-	}
-	if occupied[cell{x: 1, y: 1}] {
-		t.Fatal("the first P stroke was filled instead of being cut out")
-	}
-	if !occupied[cell{x: 2, y: 2}] {
-		t.Fatal("the first P counter did not retain the plaque background")
-	}
-}
-
-func TestParticleFallsBouncesAndSettles(t *testing.T) {
-	start := time.Unix(10, 0)
-	particle := particle{x: 1, startY: -2, targetY: 7, activatedAt: start, duration: 400 * time.Millisecond, bounce: 220 * time.Millisecond}
-	if _, visible, _ := particlePosition(particle, start.Add(-time.Millisecond)); visible {
-		t.Fatal("particle was visible before activation")
-	}
-	if y, visible, settled := particlePosition(particle, start.Add(430*time.Millisecond)); !visible || settled || y != 6 {
-		t.Fatalf("bounce position = %d, visible = %v, settled = %v", y, visible, settled)
-	}
-	if y, visible, settled := particlePosition(particle, start.Add(550*time.Millisecond)); !visible || settled || y != 7 {
-		t.Fatalf("return position = %d, visible = %v, settled = %v", y, visible, settled)
-	}
-	if y, visible, settled := particlePosition(particle, start.Add(time.Second)); !visible || !settled || y != 7 {
-		t.Fatalf("settled position = %d, visible = %v, settled = %v", y, visible, settled)
-	}
-}
-
-func TestParticlesAccumulateFromBottomWithScatteredColumns(t *testing.T) {
-	model := NewModel(nil, SetupCompletion, Progress{Step: 1, Steps: 1, Stage: "Checking environment"})
-	model.width = 80
-	model.ensureParticles()
-	if len(model.particles) < 5 {
-		t.Fatalf("particles = %d", len(model.particles))
-	}
-
-	for index := 1; index < len(model.particles); index++ {
-		previous := model.particles[index-1]
-		current := model.particles[index]
-		if current.targetY > previous.targetY {
-			t.Fatalf("particle %d target row %d followed lower row %d", index-1, previous.targetY, current.targetY)
-		}
-		if current.threshold < previous.threshold {
-			t.Fatalf("particle %d threshold %d followed %d", index-1, previous.threshold, current.threshold)
-		}
-	}
-
-	minimumX, maximumX := model.particles[0].x, model.particles[0].x
-	for _, particle := range model.particles[1:5] {
-		minimumX = min(minimumX, particle.x)
-		maximumX = max(maximumX, particle.x)
-	}
-	if maximumX-minimumX < 10 {
-		t.Fatalf("first wave columns were not scattered: %d..%d", minimumX, maximumX)
-	}
-}
-
-func TestInstallCadenceAccelerates(t *testing.T) {
-	model := NewModel(nil, SetupCompletion, Progress{Step: 1, Steps: 5, Stage: "Checking environment"})
-	model.width = 80
-	model.ensureParticles()
-	first := model.particles[0]
-	last := model.particles[len(model.particles)-1]
-	if first.duration <= last.duration {
-		t.Fatalf("fall duration did not accelerate: first=%s last=%s", first.duration, last.duration)
-	}
-	earlySize, earlyGap := model.waveTiming(0)
-	lateSize, lateGap := model.waveTiming(len(model.particles) - 1)
-	if earlySize != 3 || lateSize != 6 || earlyGap <= lateGap {
-		t.Fatalf("wave timing did not accelerate: early=%d/%s late=%d/%s", earlySize, earlyGap, lateSize, lateGap)
-	}
-	eligibleAtHalf := 0
-	for _, particle := range model.particles {
-		if particle.threshold <= 50 {
-			eligibleAtHalf++
-		}
-	}
-	if eligibleAtHalf >= len(model.particles)/2 {
-		t.Fatalf("first half of progress activated too many blocks: %d/%d", eligibleAtHalf, len(model.particles))
-	}
-
+func TestCompletionImmediatelyShowsStableStepList(t *testing.T) {
+	model := NewModel(nil, SetupCompletion, Progress{Step: 5, Steps: 5, Stage: "Installation verified"})
 	updated, _ := model.Update(workEvent{done: true})
 	model = updated.(Model)
-	finish := model.now
-	for _, particle := range model.particles {
-		settles := particle.activatedAt.Add(particle.duration + particle.bounce)
-		if settles.After(finish) {
-			finish = settles
-		}
-	}
-	if catchUp := finish.Sub(model.now); catchUp > 800*time.Millisecond {
-		t.Fatalf("install catch-up = %s, maximum 800ms", catchUp)
+	view := model.View().Content
+	if !model.finalFrame || strings.Count(view, "✓") != 5 || !strings.Contains(view, "Installation ready") || !strings.Contains(view, "Running final checks") {
+		t.Fatalf("completed stepper = %q", view)
 	}
 }
 
-func TestCompletionInitializesAndAcceleratesParticlesBeforeFirstTick(t *testing.T) {
-	model := NewModel(nil, SetupCompletion, Progress{Step: 1, Steps: 5, Stage: "Checking environment"})
-	updated, _ := model.Update(workEvent{done: true})
-	model = updated.(Model)
-	if len(model.particles) == 0 {
-		t.Fatal("completion did not initialize particles")
-	}
-	finish := model.now
-	for _, particle := range model.particles {
-		settles := particle.activatedAt.Add(particle.duration + particle.bounce)
-		if settles.After(finish) {
-			finish = settles
-		}
-	}
-	if catchUp := finish.Sub(model.now); catchUp > 800*time.Millisecond {
-		t.Fatalf("pre-tick install catch-up = %s, maximum 800ms", catchUp)
-	}
-}
-
-func TestCompletedModelRendersHollowLogoAndCommand(t *testing.T) {
+func TestCompletedModelRendersStepperAndCommand(t *testing.T) {
 	for _, test := range []struct {
 		mode  CompletionMode
 		title string
@@ -164,28 +33,20 @@ func TestCompletedModelRendersHollowLogoAndCommand(t *testing.T) {
 		for _, width := range []int{20, 40, 80, 120} {
 			model := NewModel(nil, test.mode, Progress{Step: 1, Steps: 5, Stage: "Checking environment"})
 			model.width = width
-			model.progress = Progress{Step: 5, Steps: 5, Stage: "Verifying installation", Percent: 100}
-			model.ensureParticles()
-			now := time.Now()
-			for index := range model.particles {
-				model.particles[index].activatedAt = now.Add(-time.Second)
-			}
-			model.now = now
+			model.progress = Progress{Step: 5, Steps: 5, Stage: "Verifying installation"}
 			model.finalFrame = true
 			view := model.View().Content
 			if !strings.Contains(view, test.title) || !strings.Contains(view, test.next) {
 				t.Fatalf("width %d completed view = %q", width, view)
 			}
-			if test.mode == SetupCompletion && !strings.Contains(view, "█") {
-				t.Fatalf("width %d install completion lost the logo: %q", width, view)
-			}
-			if test.mode != SetupCompletion && strings.Contains(view, "█") {
-				t.Fatalf("width %d compact completion retained the canvas: %q", width, view)
+			for _, line := range strings.Split(view, "\n") {
+				if (strings.Contains(line, test.title) || strings.Contains(line, test.next) || strings.Contains(line, "[5/5]")) && strings.HasPrefix(line, " ") {
+					t.Fatalf("width %d completion content remained centered: %q", width, line)
+				}
 			}
 			if test.mode != SetupCompletion {
-				wantLines := model.canvasHeight() + 1
-				if gotLines := strings.Count(view, "\n") + 1; gotLines != wantLines {
-					t.Fatalf("width %d compact completion lines = %d, want %d: %q", width, gotLines, wantLines, view)
+				if gotLines := strings.Count(view, "\n") + 1; gotLines > 2 {
+					t.Fatalf("width %d compact completion lines = %d, want at most 2: %q", width, gotLines, view)
 				}
 			}
 			for _, line := range strings.Split(view, "\n") {
@@ -197,62 +58,18 @@ func TestCompletedModelRendersHollowLogoAndCommand(t *testing.T) {
 	}
 }
 
-func TestProgressActivatesMultipleColumnsInAcceleratingWaves(t *testing.T) {
-	model := NewModel(nil, SetupCompletion, Progress{Step: 1, Steps: 1, Stage: "Checking environment"})
-	model.width = 80
-	model.progress.Percent = 40
-	model.ensureParticles()
-	now := time.Now()
-	model.activateEligible(now)
-	columns := make(map[int]bool)
-	var activated []particle
-	for _, particle := range model.particles {
-		if !particle.activatedAt.IsZero() {
-			columns[particle.x] = true
-			activated = append(activated, particle)
-		}
-	}
-	if len(activated) < 6 || len(columns) < 3 {
-		t.Fatalf("activated = %d, columns = %d", len(activated), len(columns))
-	}
-	if activated[3].activatedAt.Sub(activated[0].activatedAt) < 100*time.Millisecond {
-		t.Fatal("the second opening wave did not start slowly")
-	}
-}
-
-func TestRepairUsesCompactCatchUp(t *testing.T) {
-	model := NewModel(nil, RepairCompletion, Progress{Step: 1, Steps: 3, Stage: "Checking environment"})
-	model.width = 80
-	model.ensureParticles()
-	if rows := strings.Count(model.View().Content, "\n") + 1; rows > repairCanvas+1 {
-		t.Fatalf("repair used %d rows, maximum %d", rows, repairCanvas+1)
-	}
-	updated, _ := model.Update(workEvent{done: true})
-	model = updated.(Model)
-	finish := model.now
-	for _, particle := range model.particles {
-		settles := particle.activatedAt.Add(particle.duration + particle.bounce)
-		if settles.After(finish) {
-			finish = settles
-		}
-	}
-	if catchUp := finish.Sub(model.now) + model.finalHold(); catchUp > 300*time.Millisecond {
-		t.Fatalf("repair catch-up = %s, maximum 300ms", catchUp)
-	}
-}
-
 func TestNonInteractiveProgressUsesPlainLines(t *testing.T) {
 	var output bytes.Buffer
 	err := Run(&output, SetupCompletion, Progress{Step: 1, Steps: 5, Stage: "Checking environment"}, func(report Reporter) error {
 		report(Progress{Step: 1, Steps: 5, Stage: "Checking environment"})
-		report(Progress{Step: 2, Steps: 5, Stage: "Downloading Zellij", Percent: 50, Downloaded: 1024, Total: 2048})
+		report(Progress{Step: 2, Steps: 5, Stage: "Downloading Zellij", Downloaded: 1024, Total: 2048})
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := output.String()
-	if strings.Count(got, "[1/5] Checking environment  0%") != 1 {
+	if strings.Count(got, "[1/5] Checking environment\n") != 1 || strings.Contains(got, "Checking environment  0%") {
 		t.Fatalf("initial progress was not emitted exactly once: %q", got)
 	}
 	if !strings.Contains(got, "[2/5] Downloading Zellij  50%  1.0 KB / 2.0 KB") {
@@ -263,14 +80,14 @@ func TestNonInteractiveProgressUsesPlainLines(t *testing.T) {
 func TestRefreshProgressUsesPlainLines(t *testing.T) {
 	var output bytes.Buffer
 	err := Run(&output, RefreshCompletion, Progress{Step: 1, Steps: 2, Stage: "Checking environment"}, func(report Reporter) error {
-		report(Progress{Step: 2, Steps: 2, Stage: "Installation verified", Percent: 100})
+		report(Progress{Step: 2, Steps: 2, Stage: "Installation verified"})
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := output.String()
-	for _, want := range []string{"[1/2] Checking environment  0%", "[2/2] Installation verified  100%", "Refresh ready\nRunning final checks\n"} {
+	for _, want := range []string{"[1/2] Checking environment", "[2/2] Installation verified", "Refresh ready\nRunning final checks\n"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("refresh progress missing %q: %q", want, got)
 		}
@@ -281,7 +98,7 @@ func TestNonInteractiveFailureDoesNotClaimCompletion(t *testing.T) {
 	var output bytes.Buffer
 	wantErr := "synthetic failure"
 	err := Run(&output, SetupCompletion, Progress{Step: 1, Steps: 5, Stage: "Checking environment"}, func(report Reporter) error {
-		report(Progress{Step: 3, Steps: 5, Stage: "Installing Codex plugin", Percent: 78})
+		report(Progress{Step: 3, Steps: 5, Stage: "Installing Codex plugin"})
 		return fmt.Errorf("%s", wantErr)
 	})
 	if err == nil || err.Error() != wantErr {
@@ -295,7 +112,7 @@ func TestNonInteractiveFailureDoesNotClaimCompletion(t *testing.T) {
 func TestRepairCompletionStartsCodexWithoutRunInstruction(t *testing.T) {
 	var output bytes.Buffer
 	err := Run(&output, RepairCompletion, Progress{Step: 1, Steps: 2, Stage: "Checking environment"}, func(report Reporter) error {
-		report(Progress{Step: 2, Steps: 2, Stage: "Installation verified", Percent: 100})
+		report(Progress{Step: 2, Steps: 2, Stage: "Installation verified"})
 		return nil
 	})
 	if err != nil {
@@ -307,71 +124,33 @@ func TestRepairCompletionStartsCodexWithoutRunInstruction(t *testing.T) {
 	}
 }
 
-func TestStatusTruncationIsCenteredAndUTF8Safe(t *testing.T) {
-	model := NewModel(nil, SetupCompletion, Progress{Step: 1, Steps: 3, Stage: "Checking environment"})
-	model.width = 17
-	model.progress = Progress{Step: 2, Steps: 3, Stage: "检查 Unicode environment", Percent: 67}
-	line := centerLine(model.renderStatus(), model.width)
-	if !utf8.ValidString(line) || lipgloss.Width(line) > model.width {
+func TestStatusTruncationIsLeftAlignedAndUTF8Safe(t *testing.T) {
+	line := fitLine("[2/3] 检查 Unicode environment", 17)
+	if !utf8.ValidString(line) || lipgloss.Width(line) > 17 {
 		t.Fatalf("status line is invalid or too wide: %q", line)
 	}
-	if got := centerLine("ready", 11); got != "   ready" {
-		t.Fatalf("centered line = %q", got)
+	if got := fitLine("ready", 11); got != "ready" {
+		t.Fatalf("left-aligned line = %q", got)
 	}
 }
 
 func TestInitialProgressUsesTheActualStageCount(t *testing.T) {
-	initial := Progress{Step: 1, Steps: 5, Stage: "Checking environment", Percent: 0}
+	initial := Progress{Step: 1, Steps: 5, Stage: "Checking environment"}
 	model := NewModel(nil, SetupCompletion, initial)
-	if model.progress != initial || strings.Contains(model.renderStatus(), "Preparing") {
-		t.Fatalf("initial progress = %#v, status = %q", model.progress, model.renderStatus())
+	status := ansi.Strip(model.currentStageLine())
+	if model.progress.Step != initial.Step || model.progress.Steps != initial.Steps || model.progress.Stage != initial.Stage || strings.Contains(status, "Preparing") {
+		t.Fatalf("initial progress = %#v, status = %q", model.progress, status)
 	}
 }
 
-func TestPixelCanvasClipsCoordinatesAndExpandsWidePixels(t *testing.T) {
-	canvas := newPixelCanvas(4, 2)
-	setPixel(canvas, -1, 0, "wide", 1)
-	setPixel(canvas, 4, 0, "wide", 1)
-	setPixel(canvas, 1, 0, "wide", 1)
-	setPixel(canvas, 1, 0, "wide", 2)
-	if got := canvas.row(0); !slices.Equal(got, []uint8{0, 2, 2, 0}) {
-		t.Fatalf("wide row = %v", got)
-	}
-	if got := canvas.row(1); !slices.Equal(got, []uint8{0, 0, 0, 0}) {
-		t.Fatalf("untouched row = %v", got)
-	}
-}
-
-func TestAllSettledRequiresEveryActivatedParticleToFinish(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0)
-	model := Model{now: now}
-	if !model.allSettled() {
-		t.Fatal("empty particle set was not settled")
-	}
-	model.particles = []particle{{duration: time.Second}}
-	if model.allSettled() {
-		t.Fatal("inactive particle was treated as settled")
-	}
-	model.particles[0].activatedAt = now.Add(-2 * time.Second)
-	if !model.allSettled() {
-		t.Fatal("finished particle was not settled")
-	}
-}
-
-func TestFailureStatusStaysExplicitAndDimsSettledBlocks(t *testing.T) {
+func TestFailureStatusStaysExplicit(t *testing.T) {
 	for _, noColor := range []bool{false, true} {
 		for _, width := range []int{8, 20, 40, 80} {
-			model := NewModel(nil, SetupCompletion, Progress{Step: 3, Steps: 5, Stage: "Installing Codex plugin", Percent: 78})
+			model := NewModel(nil, SetupCompletion, Progress{Step: 3, Steps: 5, Stage: "Installing Codex plugin"})
 			model.width = width
 			model.noColor = noColor
 			model.failed = true
 			model.done = true
-			model.ensureParticles()
-			now := time.Now()
-			if len(model.particles) > 0 {
-				model.particles[0].activatedAt = now.Add(-time.Second)
-			}
-			model.now = now
 			view := model.View().Content
 			if !strings.Contains(view, "[FAIL]") || strings.Contains(view, "Installation ready") {
 				t.Fatalf("color=%v width=%d failure view = %q", !noColor, width, view)
@@ -381,9 +160,58 @@ func TestFailureStatusStaysExplicitAndDimsSettledBlocks(t *testing.T) {
 					t.Fatalf("color=%v width=%d line exceeds width: %q", !noColor, width, line)
 				}
 			}
-			if !noColor && width >= 20 && len(model.particles) > 0 && !strings.Contains(view, activeStyle(false).Render("█")) {
-				t.Fatalf("width=%d settled failure block was not dimmed: %q", width, view)
+			if !noColor && width >= 20 && !strings.Contains(view, model.stepperGraphicStyle(model.colors.Error).Render("×")) {
+				t.Fatalf("width=%d failure marker did not use the error role: %q", width, view)
 			}
 		}
+	}
+}
+
+func TestStepperUsesActualPlanAndOnlyRealDownloadPercentage(t *testing.T) {
+	model := NewModel(nil, SetupCompletion, Progress{
+		Step: 2, Steps: 4, Stage: "Downloading Zellij", Downloaded: 1024, Total: 2048,
+		Plan: []string{"Environment", "Zellij 0.44.3", "Codex plugin", "Installation verification"},
+	})
+	model.width = 120
+	model.noColor = true
+	view := ansi.Strip(model.View().Content)
+	for _, want := range []string{"Prompt Pane setup", "✓ Environment", "[2/4] Downloading Zellij", "50%", "1.0 KB / 2.0 KB", "○ Codex plugin", "○ Installation verification"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("stepper missed %q: %q", want, view)
+		}
+	}
+}
+
+func TestStepperFailureKeepsPendingStagesAndFullError(t *testing.T) {
+	model := NewModel(nil, SetupCompletion, Progress{
+		Step: 2, Steps: 3, Stage: "Installing Codex plugin",
+		Plan: []string{"Environment", "Codex plugin", "Installation verification"},
+	})
+	model.width = 120
+	model.noColor = true
+	updated, _ := model.Update(workEvent{done: true, err: fmt.Errorf("plugin directory is not writable; check permissions")})
+	view := ansi.Strip(updated.(Model).View().Content)
+	for _, want := range []string{"✓ Environment", "× [FAIL] [2/3] Installing Codex plugin", "○ Installation verification", "Error: plugin directory is not writable; check permissions"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("failure stepper missed %q: %q", want, view)
+		}
+	}
+	if strings.Contains(view, "Installation ready") {
+		t.Fatalf("failure stepper claimed completion: %q", view)
+	}
+}
+
+func TestStepperUsesThemeRolesWithoutColoringWholeStage(t *testing.T) {
+	model := NewModel(nil, SetupCompletion, Progress{
+		Step: 1, Steps: 2, Stage: "Downloading Zellij", Downloaded: 1, Total: 2,
+		Plan: []string{"Zellij 0.44.3", "Installation verification"},
+	})
+	model.width = 120
+	model.noColor = false
+	line := model.currentStageLine()
+	if !strings.Contains(line, model.stepperGraphicStyle(model.colors.FocusMarker).Render(spinnerFrames[0])) ||
+		!strings.Contains(line, model.stepperBodyStyle(false).Render("Downloading Zellij")) ||
+		!strings.Contains(line, model.stepperGraphicStyle(model.colors.ProgressFill).Render("████████")) {
+		t.Fatalf("stepper did not use focus/body/progress roles independently: %q", line)
 	}
 }

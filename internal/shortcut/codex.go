@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Natsume-kkk/prompt-pane/internal/filetxn"
 	"github.com/Natsume-kkk/prompt-pane/internal/paths"
 )
 
@@ -122,7 +123,7 @@ func Install(codexPath, executable string) (string, error) {
 	if err := os.Chmod(temporaryPath, 0o700); err != nil {
 		return "", fmt.Errorf("prepare codex.pp executable: %w", err)
 	}
-	if err := replaceFile(temporaryPath, target); err != nil {
+	if err := filetxn.Replace(temporaryPath, target); err != nil {
 		return "", fmt.Errorf("activate codex.pp executable: %w", err)
 	}
 	if err := writeState(state{Path: target, SHA256: sourceHash, Protocol: launcherProtocol}); err != nil {
@@ -289,7 +290,7 @@ func writeState(installed state) error {
 	if err := os.Chmod(temporaryPath, 0o600); err != nil {
 		return fmt.Errorf("prepare codex.pp ownership state: %w", err)
 	}
-	if err := replaceFile(temporaryPath, path); err != nil {
+	if err := filetxn.Replace(temporaryPath, path); err != nil {
 		return fmt.Errorf("activate codex.pp ownership state: %w", err)
 	}
 	return nil

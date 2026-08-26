@@ -40,7 +40,7 @@ func PreflightManagedInstallAccess() error {
 
 func InstallManagedWithProgress(ctx context.Context, progress func(downloaded, total int64)) (string, error) {
 	if runtime.GOOS != "windows" || runtime.GOARCH != "amd64" {
-		return "", fmt.Errorf("managed Zellij is only supported on Windows x64 in v1.1.0")
+		return "", fmt.Errorf("managed Zellij is only supported on Windows x64")
 	}
 	target, err := ManagedPath()
 	if err != nil {

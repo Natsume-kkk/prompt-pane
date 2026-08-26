@@ -34,11 +34,15 @@ type pluginList struct {
 }
 
 func PluginInstalled(codexPath string) bool {
-	listed := pluginListed(codexPath)
 	executable, err := os.Executable()
 	if err != nil {
 		return false
 	}
+	return PluginInstalledFor(codexPath, executable)
+}
+
+func PluginInstalledFor(codexPath, executable string) bool {
+	listed := pluginListed(codexPath)
 	home, err := codexHome()
 	if err != nil || !cachedPluginMatches(executable, home) {
 		return false
@@ -81,7 +85,7 @@ func codexHome() (string, error) {
 }
 
 func cachedPluginMatches(executable, home string) bool {
-	version, err := embeddedPluginVersion()
+	version, err := installedPluginVersion()
 	if err != nil || version == "" || filepath.Base(version) != version {
 		return false
 	}
@@ -91,6 +95,21 @@ func cachedPluginMatches(executable, home string) bool {
 		return false
 	}
 	return sameFileContents(executable, filepath.Join(root, "bin", "prompt-pane.exe"))
+}
+
+func installedPluginVersion() (string, error) {
+	root, err := marketplaceRoot()
+	if err != nil {
+		return "", err
+	}
+	manifest, err := readPluginManifest(filepath.Join(root, "plugins", pluginName, ".codex-plugin", "plugin.json"))
+	if err != nil {
+		return "", err
+	}
+	if manifest.Name != pluginName || manifest.Version == "" || filepath.Base(manifest.Version) != manifest.Version {
+		return "", fmt.Errorf("installed plugin manifest identity is invalid")
+	}
+	return manifest.Version, nil
 }
 
 func pluginEnabled(home string) bool {

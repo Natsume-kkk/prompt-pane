@@ -1,0 +1,11 @@
+{
+  "session_id": "thr_synthetic",
+  "turn_id": "turn_synthetic",
+  "hook_event_name": "Stop",
+  "transcript_path": null,
+  "cwd": "C:\\synthetic",
+  "model": "gpt-5.6-sol",
+  "permission_mode": "default",
+  "stop_hook_active": false,
+  "last_assistant_message": null
+}

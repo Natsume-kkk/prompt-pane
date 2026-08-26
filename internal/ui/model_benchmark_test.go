@@ -21,7 +21,7 @@ func BenchmarkRenderPromptList(b *testing.B) {
 
 func BenchmarkRenderThemePage(b *testing.B) {
 	model := benchmarkModel(20)
-	model.showTheme = true
+	model.overlay = overlayTheme
 	model.beginThemePreview()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -32,6 +32,14 @@ func BenchmarkRenderThemePage(b *testing.B) {
 
 func BenchmarkWrapMixedText(b *testing.B) {
 	text := strings.Repeat("中文 prompt with emoji 🚀 and a long URL https://example.com/path?q=1\n", 20)
+	b.ReportAllocs()
+	for range b.N {
+		_ = wrapMixedText(text, 44)
+	}
+}
+
+func BenchmarkWrapLongUnbrokenText(b *testing.B) {
+	text := strings.Repeat("a", 64<<10)
 	b.ReportAllocs()
 	for range b.N {
 		_ = wrapMixedText(text, 44)
@@ -51,7 +59,7 @@ func benchmarkModel(promptCount int) Model {
 		selectedID: prompts[promptCount-1].ID,
 		snapshot: ipc.Snapshot{State: "live", Prompts: prompts, Metrics: &provider.SessionMetrics{
 			Branch: "main", Model: "gpt-5.6", TotalTokens: 2_400_000, ContextUsedPercent: 66,
-			FiveHour: &provider.QuotaWindow{UsedPercent: 42}, SevenDay: &provider.QuotaWindow{UsedPercent: 73},
+			Quotas: []provider.QuotaWindow{{WindowMinutes: 300, UsedPercent: 42}, {WindowMinutes: 10080, UsedPercent: 73}}, QuotaStatus: provider.QuotaAvailable,
 		}},
 	}
 	model.applyTheme(theme.Mocha)

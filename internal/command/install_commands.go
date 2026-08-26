@@ -15,19 +15,9 @@ import (
 )
 
 func (a App) setupVersionedCodex() int {
-	if err := requireWindowsX64(); err != nil {
-		return a.fail(err.Error())
-	}
-	if _, err := findPowerShell(); err != nil {
-		return a.fail(err.Error())
-	}
-	codexPath, err := exec.LookPath("codex")
+	codexPath, executable, err := resolveInstallEnvironment()
 	if err != nil {
-		return a.fail("Codex CLI was not found in PATH")
-	}
-	executable, err := os.Executable()
-	if err != nil {
-		return a.fail("cannot locate the Prompt Pane executable")
+		return a.fail(err.Error())
 	}
 	gate, err := acquireUpdateGate()
 	if err != nil {
@@ -128,19 +118,9 @@ func (a App) setupVersionedCodex() int {
 }
 
 func (a App) prepareCodexLaunch() int {
-	if err := requireWindowsX64(); err != nil {
-		return a.fail(err.Error())
-	}
-	if _, err := findPowerShell(); err != nil {
-		return a.fail(err.Error())
-	}
-	codexPath, err := exec.LookPath("codex")
+	codexPath, executable, err := resolveInstallEnvironment()
 	if err != nil {
-		return a.fail("Codex CLI was not found in PATH")
-	}
-	executable, err := os.Executable()
-	if err != nil {
-		return a.fail("cannot locate the Prompt Pane executable")
+		return a.fail(err.Error())
 	}
 	gate, err := acquireUpdateGate()
 	if err != nil {
@@ -161,19 +141,9 @@ func (a App) prepareCodexLaunch() int {
 }
 
 func (a App) activatePendingCodex() int {
-	if err := requireWindowsX64(); err != nil {
-		return a.fail(err.Error())
-	}
-	if _, err := findPowerShell(); err != nil {
-		return a.fail(err.Error())
-	}
-	codexPath, err := exec.LookPath("codex")
+	codexPath, executable, err := resolveInstallEnvironment()
 	if err != nil {
-		return a.fail("Codex CLI was not found in PATH")
-	}
-	executable, err := os.Executable()
-	if err != nil {
-		return a.fail("cannot locate the Prompt Pane executable")
+		return a.fail(err.Error())
 	}
 	gate, err := acquireUpdateGate()
 	if err != nil {
@@ -204,6 +174,24 @@ func (a App) activatePendingCodex() int {
 	return 0
 }
 
+func resolveInstallEnvironment() (string, string, error) {
+	if err := requireWindowsX64(); err != nil {
+		return "", "", err
+	}
+	if _, err := findPowerShell(); err != nil {
+		return "", "", err
+	}
+	codexPath, err := exec.LookPath("codex")
+	if err != nil {
+		return "", "", fmt.Errorf("Codex CLI was not found in PATH")
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return "", "", fmt.Errorf("cannot locate the Prompt Pane executable")
+	}
+	return codexPath, executable, nil
+}
+
 func (a App) bootstrapVersionedInstallation(codexPath, executable string, release runtimeinstall.Release) error {
 	transaction, err := captureSetupTransaction(codexPath, true, true, true)
 	if err != nil {
@@ -213,19 +201,13 @@ func (a App) bootstrapVersionedInstallation(codexPath, executable string, releas
 	transaction.pluginChanged = true
 	transaction.aliasChanged = true
 	transaction.installChanged = true
-	rollback := func(installErr error) error {
-		if rollbackErr := transaction.rollback(); rollbackErr != nil {
-			return fmt.Errorf("%w; installation rollback failed: %v", installErr, rollbackErr)
-		}
-		return installErr
-	}
 
 	launcherDigest, err := runtimeinstall.InstallLauncher(executable, nil)
 	if err != nil {
-		return rollback(err)
+		return transaction.rollbackAfter(err)
 	}
 	if _, err := a.ensureCodexSetup(codexPath, executable, false, noWorkspaceChange); err != nil {
-		return rollback(err)
+		return transaction.rollbackAfter(err)
 	}
 	state := runtimeinstall.State{
 		SchemaVersion:  runtimeinstall.SchemaVersion,
@@ -233,10 +215,10 @@ func (a App) bootstrapVersionedInstallation(codexPath, executable string, releas
 		Current:        &release,
 	}
 	if err := runtimeinstall.Save(state); err != nil {
-		return rollback(err)
+		return transaction.rollbackAfter(err)
 	}
 	if err := verifyVersionedInstallation(codexPath, executable, state); err != nil {
-		return rollback(err)
+		return transaction.rollbackAfter(err)
 	}
 	reportCleanupWarnings(a.Err, runtimeinstall.CleanupUnreferenced(state))
 	return nil
@@ -275,10 +257,7 @@ func (a App) ensureCurrentInstallation(codexPath, executable string, state runti
 		err = verifyVersionedInstallation(codexPath, executable, state)
 	}
 	if err != nil {
-		if rollbackErr := transaction.rollback(); rollbackErr != nil {
-			return false, fmt.Errorf("%w; installation rollback failed: %v", err, rollbackErr)
-		}
-		return false, err
+		return false, transaction.rollbackAfter(err)
 	}
 	return true, nil
 }
@@ -298,30 +277,24 @@ func (a App) activatePendingLocked(codexPath, executable string, state runtimein
 	transaction.pluginChanged = true
 	transaction.aliasChanged = true
 	transaction.installChanged = true
-	rollback := func(activationErr error) error {
-		if rollbackErr := transaction.rollback(); rollbackErr != nil {
-			return fmt.Errorf("%w; installation rollback failed: %v", activationErr, rollbackErr)
-		}
-		return activationErr
-	}
 
 	launcherDigest, err := runtimeinstall.InstallLauncher(executable, &state)
 	if err != nil {
-		return rollback(err)
+		return transaction.rollbackAfter(err)
 	}
 	state.LauncherSHA256 = launcherDigest
 	if _, err := a.ensureCodexSetup(codexPath, executable, beforeLaunch, noWorkspaceChange); err != nil {
-		return rollback(err)
+		return transaction.rollbackAfter(err)
 	}
 	next, err := runtimeinstall.ActivatePending(state)
 	if err != nil {
-		return rollback(err)
+		return transaction.rollbackAfter(err)
 	}
 	if err := runtimeinstall.Save(next); err != nil {
-		return rollback(err)
+		return transaction.rollbackAfter(err)
 	}
 	if err := verifyVersionedInstallation(codexPath, executable, next); err != nil {
-		return rollback(err)
+		return transaction.rollbackAfter(err)
 	}
 	reportCleanupWarnings(a.Err, runtimeinstall.CleanupUnreferenced(next))
 	fmt.Fprintf(a.Out, "Activated Prompt Pane %s.\n", runtimeinstall.ReleaseLabel(*next.Current))

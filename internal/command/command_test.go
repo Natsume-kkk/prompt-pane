@@ -14,8 +14,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	runtimeinstall "github.com/Natsume-kkk/prompt-pane/internal/install"
+	"github.com/Natsume-kkk/prompt-pane/internal/ipc"
 	runcontext "github.com/Natsume-kkk/prompt-pane/internal/run"
 	"github.com/Natsume-kkk/prompt-pane/internal/setupui"
+	"github.com/Natsume-kkk/prompt-pane/internal/shortcut"
 	"github.com/Natsume-kkk/prompt-pane/internal/ui"
 	"github.com/Natsume-kkk/prompt-pane/plugins"
 )
@@ -134,7 +136,7 @@ func TestInputBufferingIsLimitedToTeardown(t *testing.T) {
 	}
 	defer terminal.Close()
 
-	for _, command := range []string{"codex", "setup", "doctor", "_agent", "_hook", "_view"} {
+	for _, command := range []string{"codex", "setup", "doctor", "_agent", "_hook", "_observe", "_view"} {
 		app := (App{In: terminal}).withInputFor(command)
 		if app.In != terminal {
 			t.Fatalf("%s replaced the original stdin handle", command)
@@ -165,23 +167,20 @@ func TestSetupStepCountIncludesOnlyRequiredWork(t *testing.T) {
 	}
 }
 
-func TestSetupPercentIsMonotonicAcrossDynamicStages(t *testing.T) {
-	previous := -1
-	for step := 1; step <= 4; step++ {
-		for _, within := range []int{0, 25, 50, 100} {
-			current := setupPercent(step, 4, within)
-			if current < previous {
-				t.Fatalf("progress moved backwards: %d after %d", current, previous)
-			}
-			previous = current
-		}
+func TestSetupPlanNamesOnlyActualStages(t *testing.T) {
+	want := []string{"Environment", "Zellij 0.44.3", "codex.pp", "Installation verification"}
+	got := setupPlan(false, true, false)
+	if len(got) != len(want) {
+		t.Fatalf("setup plan = %#v, want %#v", got, want)
 	}
-	if previous != 100 || setupPercent(1, 2, -10) != 0 || setupPercent(2, 2, 150) != 100 {
-		t.Fatalf("progress boundaries are incorrect: final=%d", previous)
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("setup plan = %#v, want %#v", got, want)
+		}
 	}
 }
 
-func TestSetupAnimationModeMatchesOperation(t *testing.T) {
+func TestSetupCompletionModeMatchesOperation(t *testing.T) {
 	for _, test := range []struct {
 		beforeLaunch bool
 		aliasManaged bool
@@ -192,7 +191,7 @@ func TestSetupAnimationModeMatchesOperation(t *testing.T) {
 		{beforeLaunch: true, want: setupui.RepairCompletion},
 		{beforeLaunch: true, aliasManaged: true, want: setupui.RepairCompletion},
 	} {
-		if got := setupAnimationMode(test.beforeLaunch, test.aliasManaged); got != test.want {
+		if got := setupCompletionMode(test.beforeLaunch, test.aliasManaged); got != test.want {
 			t.Fatalf("beforeLaunch=%v aliasManaged=%v mode=%d, want %d", test.beforeLaunch, test.aliasManaged, got, test.want)
 		}
 	}
@@ -212,7 +211,7 @@ func TestDoctorFailureMessageProvidesOneActionableNextStep(t *testing.T) {
 
 func TestLaunchRepairNeedsNoConfirmationAndSetupRunsFinalChecks(t *testing.T) {
 	if runtime.GOOS != "windows" {
-		t.Skip("Windows x64 is the v1.1.0 target")
+		t.Skip("Windows x64 is the supported target")
 	}
 	if _, err := findPowerShell(); err != nil {
 		t.Skip(err)
@@ -257,6 +256,13 @@ func TestLaunchRepairNeedsNoConfirmationAndSetupRunsFinalChecks(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(cache, ".codex-plugin", "plugin.json"), manifestData, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	installedManifest := filepath.Join(promptPaneHome, "codex-marketplace", "plugins", "prompt-pane", ".codex-plugin", "plugin.json")
+	if err := os.MkdirAll(filepath.Dir(installedManifest), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(installedManifest, manifestData, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -296,7 +302,7 @@ func TestLaunchRepairNeedsNoConfirmationAndSetupRunsFinalChecks(t *testing.T) {
 	}
 
 	output.Reset()
-	if code := app.setupCodex(); code != 0 {
+	if code := app.setupVersionedCodex(); code != 0 {
 		t.Fatalf("setup exit code = %d, output = %q", code, output.String())
 	}
 	for _, want := range []string{"Running final checks", "[OK]   Platform", "Environment is ready", "Setup complete.", "Run `codex.pp` when ready."} {
@@ -319,6 +325,104 @@ func TestSetupCompletionExplainsFirstPromptTrustOnlyOnFirstInstall(t *testing.T)
 	writeSetupCompletion(&refresh, false)
 	if output := refresh.String(); !strings.Contains(output, "Run `codex.pp` when ready.") || strings.Contains(output, "/hooks") || strings.Contains(output, "first prompt") {
 		t.Fatalf("refresh completion repeated first-install guidance: %q", output)
+	}
+}
+
+func TestDoctorValidatesPluginAgainstInstalledCurrentWhenPendingExists(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows x64 is the supported target")
+	}
+	if _, err := findPowerShell(); err != nil {
+		t.Skip(err)
+	}
+	root := t.TempDir()
+	promptPaneHome := filepath.Join(root, "Prompt Pane data")
+	codexHome := filepath.Join(root, "Codex data")
+	t.Setenv("PROMPT_PANE_HOME", promptPaneHome)
+	t.Setenv("CODEX_HOME", codexHome)
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	codexPath := filepath.Join(bin, "codex.cmd")
+	if err := os.WriteFile(codexPath, []byte("@exit /b 1\r\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "zellij.cmd"), []byte("@echo zellij 0.44.3\r\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	currentSource := filepath.Join(root, "current-prompt-pane.exe")
+	if err := os.WriteFile(currentSource, []byte("current prompt pane"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	current, _, err := runtimeinstall.Stage(currentSource, "1.1.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentPath, err := runtimeinstall.RuntimePath(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	launcherDigest, err := runtimeinstall.InstallLauncher(currentSource, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pendingSource := filepath.Join(root, "pending-prompt-pane.exe")
+	if err := os.WriteFile(pendingSource, []byte("pending prompt pane"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pending, _, err := runtimeinstall.Stage(pendingSource, "1.1.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := runtimeinstall.State{SchemaVersion: runtimeinstall.SchemaVersion, LauncherSHA256: launcherDigest, Current: &current, Pending: &pending}
+	if err := runtimeinstall.Save(state); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shortcut.Install(codexPath, currentPath); err != nil {
+		t.Fatal(err)
+	}
+
+	manifestData := []byte(`{"name":"prompt-pane","version":"current-cachebuster"}`)
+	cache := filepath.Join(codexHome, "plugins", "cache", "prompt-pane", "prompt-pane", "current-cachebuster")
+	if err := os.MkdirAll(filepath.Join(cache, ".codex-plugin"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(cache, "bin"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cache, ".codex-plugin", "plugin.json"), manifestData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	installedCurrentManifest := filepath.Join(promptPaneHome, "codex-marketplace", "plugins", "prompt-pane", ".codex-plugin", "plugin.json")
+	if err := os.MkdirAll(filepath.Dir(installedCurrentManifest), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(installedCurrentManifest, manifestData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	currentBinary, err := os.ReadFile(currentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cache, "bin", "prompt-pane.exe"), currentBinary, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte("[plugins.\"prompt-pane@prompt-pane\"]\nenabled = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	app := App{In: failOnRead{t}, Out: &output, Err: &output}
+	if code := app.checkEnvironment(false); code != 0 {
+		t.Fatalf("doctor exit code = %d, output = %q", code, output.String())
+	}
+	for _, want := range []string{"current version: v1.1.0", "pending version: v1.1.0", "Codex plugin: installed and enabled", "Environment is ready"} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("doctor output is missing %q: %q", want, output.String())
+		}
 	}
 }
 
@@ -367,7 +471,7 @@ func TestSetupStagesNewVersionWhileWorkspaceIsActive(t *testing.T) {
 
 	var output bytes.Buffer
 	app := App{In: failOnRead{t}, Out: &output, Err: &output}
-	if code := app.setupCodex(); code != 0 {
+	if code := app.setupVersionedCodex(); code != 0 {
 		t.Fatalf("setup exit code = %d, output = %q", code, output.String())
 	}
 	got, err := runtimeinstall.Load()
@@ -413,7 +517,7 @@ func TestFirstVersionedMigrationStopsBeforeStagingWhenWorkspaceIsActive(t *testi
 
 	var output bytes.Buffer
 	app := App{In: failOnRead{t}, Out: &output, Err: &output}
-	if code := app.setupCodex(); code == 0 {
+	if code := app.setupVersionedCodex(); code == 0 {
 		t.Fatalf("first migration unexpectedly succeeded: %q", output.String())
 	}
 	if !strings.Contains(output.String(), "close all running Prompt Pane workspaces once") {
@@ -502,8 +606,16 @@ func TestStopHookSilentlySkipsUnavailableMetrics(t *testing.T) {
 	} {
 		t.Setenv(name, value)
 	}
+	server := ipc.NewServer(run)
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	if code := (App{In: strings.NewReader(`{"session_id":"thr_synthetic","hook_event_name":"SessionStart","source":"startup"}`), Out: io.Discard, Err: io.Discard}).Execute([]string{"_hook", "codex"}); code != 0 {
+		t.Fatalf("SessionStart hook exit = %d", code)
+	}
 	var output bytes.Buffer
-	app := App{In: strings.NewReader(`{"session_id":"thr_synthetic","hook_event_name":"Stop","transcript_path":"Z:\\missing\\session.jsonl"}`), Out: &output, Err: &output}
+	app := App{In: strings.NewReader(`{"session_id":"thr_synthetic","turn_id":"turn_synthetic","hook_event_name":"Stop","transcript_path":"Z:\\missing\\session.jsonl"}`), Out: &output, Err: &output}
 	if code := app.Execute([]string{"_hook", "codex"}); code != 0 || output.Len() != 0 {
 		t.Fatalf("Stop hook exit = %d, output = %q", code, output.String())
 	}
@@ -519,8 +631,16 @@ func TestStopHookSilentlySkipsMissingTranscript(t *testing.T) {
 	} {
 		t.Setenv(name, value)
 	}
+	server := ipc.NewServer(run)
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	if code := (App{In: strings.NewReader(`{"session_id":"thr_synthetic","hook_event_name":"SessionStart","source":"startup"}`), Out: io.Discard, Err: io.Discard}).Execute([]string{"_hook", "codex"}); code != 0 {
+		t.Fatalf("SessionStart hook exit = %d", code)
+	}
 	var output bytes.Buffer
-	app := App{In: strings.NewReader(`{"session_id":"thr_synthetic","hook_event_name":"Stop","transcript_path":null}`), Out: &output, Err: &output}
+	app := App{In: strings.NewReader(`{"session_id":"thr_synthetic","turn_id":"turn_synthetic","hook_event_name":"Stop","transcript_path":null}`), Out: &output, Err: &output}
 	if code := app.Execute([]string{"_hook", "codex"}); code != 0 || output.Len() != 0 {
 		t.Fatalf("Stop hook exit = %d, output = %q", code, output.String())
 	}
