@@ -31,6 +31,7 @@ type Server struct {
 	metrics        *provider.SessionMetrics
 	parent         *sessionView
 	viewers        map[net.Conn]struct{}
+	turnWatchers   map[turnKey]*turnWatcher
 	closed         chan struct{}
 	closeOnce      sync.Once
 }
@@ -49,13 +50,23 @@ type sessionView struct {
 	metrics        *provider.SessionMetrics
 }
 
+type turnKey struct {
+	sessionID string
+	turnID    string
+}
+
+type turnWatcher struct {
+	done chan struct{}
+}
+
 func NewServer(run runcontext.Context) *Server {
 	return &Server{
-		run:     run,
-		state:   "ready",
-		stale:   make(map[string]struct{}),
-		viewers: make(map[net.Conn]struct{}),
-		closed:  make(chan struct{}),
+		run:          run,
+		state:        "ready",
+		stale:        make(map[string]struct{}),
+		viewers:      make(map[net.Conn]struct{}),
+		turnWatchers: make(map[turnKey]*turnWatcher),
+		closed:       make(chan struct{}),
 	}
 }
 
@@ -83,6 +94,7 @@ func (s *Server) Close() error {
 			_ = viewer.Close()
 		}
 		s.viewers = nil
+		s.finishAllTurnWatchersLocked()
 		s.mu.Unlock()
 	})
 	return closeErr
@@ -120,6 +132,9 @@ func (s *Server) handle(conn net.Conn) {
 	case "subscribe":
 		_ = conn.SetReadDeadline(time.Time{})
 		s.addViewer(conn)
+	case "watch_turn":
+		_ = conn.SetReadDeadline(time.Time{})
+		s.addTurnWatcher(conn, request.Watch)
 	default:
 		_ = conn.Close()
 	}
@@ -168,6 +183,9 @@ func (s *Server) apply(event provider.Event) bool {
 			s.state = "live"
 			break
 		}
+		if sessionChanged || s.parent != nil {
+			s.finishAllTurnWatchersLocked()
+		}
 		s.parent = nil
 		if sessionChanged {
 			s.stale[s.sessionID] = struct{}{}
@@ -210,6 +228,9 @@ func (s *Server) apply(event provider.Event) bool {
 		if s.state == "ended" {
 			return true
 		}
+		if s.activeTurnID != "" && s.activeTurnID != turnID {
+			s.finishTurnWatcherLocked(turnKey{sessionID: s.sessionID, turnID: s.activeTurnID})
+		}
 		prompt := *event.Prompt
 		prompt.ID = s.nextPromptIDLocked()
 		s.prompts = append(s.prompts, prompt)
@@ -223,6 +244,7 @@ func (s *Server) apply(event provider.Event) bool {
 		}
 		if event.SessionID != s.sessionID {
 			if s.parent != nil && event.SessionID == s.parent.sessionID {
+				s.finishTurnWatcherLocked(turnKey{sessionID: event.SessionID, turnID: event.TurnID})
 				if event.TurnID == s.parent.activeTurnID {
 					s.parent.activeTurnID = ""
 					s.parent.activePromptID = ""
@@ -233,8 +255,12 @@ func (s *Server) apply(event provider.Event) bool {
 				return true
 			}
 			_, stale := s.stale[event.SessionID]
+			if stale {
+				s.finishTurnWatcherLocked(turnKey{sessionID: event.SessionID, turnID: event.TurnID})
+			}
 			return stale
 		}
+		s.finishTurnWatcherLocked(turnKey{sessionID: event.SessionID, turnID: event.TurnID})
 		if s.state == "ended" || event.TurnID != s.activeTurnID {
 			return true
 		}
@@ -246,8 +272,12 @@ func (s *Server) apply(event provider.Event) bool {
 	case provider.SessionEnded:
 		if event.SessionID != s.sessionID {
 			_, stale := s.stale[event.SessionID]
+			if stale {
+				s.finishSessionWatchersLocked(event.SessionID)
+			}
 			return stale
 		}
+		s.finishSessionWatchersLocked(event.SessionID)
 		if s.parent != nil {
 			s.restoreParentLocked()
 			break
@@ -264,6 +294,7 @@ func (s *Server) apply(event provider.Event) bool {
 }
 
 func (s *Server) resetSessionLocked(notice string) {
+	s.finishSessionWatchersLocked(s.sessionID)
 	s.prompts = nil
 	s.metrics = nil
 	s.activeTurnID = ""
@@ -279,6 +310,7 @@ func (s *Server) nextPromptIDLocked() string {
 func (s *Server) restoreParentLocked() {
 	overlayID := s.sessionID
 	parentID := s.parent.sessionID
+	s.finishSessionWatchersLocked(overlayID)
 	s.restoreSessionLocked(*s.parent)
 	s.parent = nil
 	s.stale[overlayID] = struct{}{}
@@ -326,6 +358,91 @@ func (s *Server) addViewer(conn net.Conn) {
 	}
 }
 
+func (s *Server) addTurnWatcher(conn net.Conn, watch *TurnWatch) {
+	if watch == nil || strings.TrimSpace(watch.SessionID) == "" || strings.TrimSpace(watch.TurnID) == "" {
+		_ = conn.Close()
+		return
+	}
+	key := turnKey{sessionID: watch.SessionID, turnID: watch.TurnID}
+	watcher := &turnWatcher{done: make(chan struct{})}
+
+	s.mu.Lock()
+	_, duplicate := s.turnWatchers[key]
+	active := s.turnActiveLocked(key)
+	select {
+	case <-s.closed:
+		active = false
+	default:
+	}
+	if active && !duplicate {
+		s.turnWatchers[key] = watcher
+	}
+	s.mu.Unlock()
+
+	if !active || duplicate {
+		_ = writeResponse(conn, Response{OK: true, Release: true})
+		_ = conn.Close()
+		return
+	}
+	if err := writeResponse(conn, Response{OK: true, Watching: true}); err != nil {
+		s.removeTurnWatcher(key, watcher)
+		_ = conn.Close()
+		return
+	}
+
+	disconnected := make(chan struct{}, 1)
+	go func() {
+		var buffer [1]byte
+		_, _ = conn.Read(buffer[:])
+		disconnected <- struct{}{}
+	}()
+	select {
+	case <-watcher.done:
+		_ = writeResponse(conn, Response{OK: true, Release: true})
+	case <-disconnected:
+	}
+	s.removeTurnWatcher(key, watcher)
+	_ = conn.Close()
+}
+
+func (s *Server) turnActiveLocked(key turnKey) bool {
+	if s.state == "live" && s.sessionID == key.sessionID && s.activeTurnID == key.turnID {
+		return true
+	}
+	return s.parent != nil && s.parent.state == "live" && s.parent.sessionID == key.sessionID && s.parent.activeTurnID == key.turnID
+}
+
+func (s *Server) removeTurnWatcher(key turnKey, watcher *turnWatcher) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.turnWatchers[key] == watcher {
+		delete(s.turnWatchers, key)
+	}
+}
+
+func (s *Server) finishTurnWatcherLocked(key turnKey) {
+	watcher, ok := s.turnWatchers[key]
+	if !ok {
+		return
+	}
+	delete(s.turnWatchers, key)
+	close(watcher.done)
+}
+
+func (s *Server) finishSessionWatchersLocked(sessionID string) {
+	for key := range s.turnWatchers {
+		if key.sessionID == sessionID {
+			s.finishTurnWatcherLocked(key)
+		}
+	}
+}
+
+func (s *Server) finishAllTurnWatchersLocked() {
+	for key := range s.turnWatchers {
+		s.finishTurnWatcherLocked(key)
+	}
+}
+
 func (s *Server) snapshotLocked() Snapshot {
 	prompts := append([]provider.UserPrompt(nil), s.prompts...)
 	return Snapshot{
@@ -355,6 +472,13 @@ func writeSnapshot(conn net.Conn, snapshot Snapshot) error {
 	return withEncodedSnapshot(snapshot, func(encoded []byte) error {
 		return writeEncodedSnapshot(conn, encoded)
 	})
+}
+
+func writeResponse(conn net.Conn, response Response) error {
+	_ = conn.SetWriteDeadline(time.Now().Add(time.Second))
+	err := json.NewEncoder(conn).Encode(response)
+	_ = conn.SetWriteDeadline(time.Time{})
+	return err
 }
 
 func withEncodedSnapshot(snapshot Snapshot, consume func([]byte) error) error {

@@ -173,3 +173,51 @@ func TestInterruptedTurnObserverClearsViewerActivity(t *testing.T) {
 		t.Fatalf("interrupted turn remained active: %#v", completed.snapshot)
 	}
 }
+
+func TestTurnObserverExitsWhenStopCompletesWithoutTranscriptRecord(t *testing.T) {
+	run, err := runcontext.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := ipc.NewServer(run)
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := ipc.SendEvent(ctx, run, provider.Event{Kind: provider.SessionStarted, SessionID: "thr_stop", Source: provider.SessionSourceStartup}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ipc.SendEvent(ctx, run, provider.Event{
+		Kind: provider.PromptSubmitted, SessionID: "thr_stop", TurnID: "turn_stop",
+		Prompt: &provider.UserPrompt{Text: "synthetic prompt"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(t.TempDir(), "current.jsonl")
+	initial := []byte("{\"type\":\"session_meta\",\"payload\":{\"id\":\"thr_stop\"}}\n")
+	if err := os.WriteFile(path, initial, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		result <- observeTurn(run, codex.TurnObservation{
+			SessionID: "thr_stop", TurnID: "turn_stop", TranscriptPath: path, Offset: int64(len(initial)),
+		})
+	}()
+	if err := ipc.SendEvent(ctx, run, provider.Event{Kind: provider.TurnCompleted, SessionID: "thr_stop", TurnID: "turn_stop"}); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("observer failed: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("observer did not exit after exact Stop completion")
+	}
+}

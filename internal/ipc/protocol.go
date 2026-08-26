@@ -13,10 +13,18 @@ type Request struct {
 	Token   string         `json:"token"`
 	Type    string         `json:"type"`
 	Event   provider.Event `json:"event,omitempty"`
+	Watch   *TurnWatch     `json:"watch,omitempty"`
 }
 
 type Response struct {
-	OK bool `json:"ok"`
+	OK       bool `json:"ok"`
+	Watching bool `json:"watching,omitempty"`
+	Release  bool `json:"release,omitempty"`
+}
+
+type TurnWatch struct {
+	SessionID string `json:"session_id"`
+	TurnID    string `json:"turn_id"`
 }
 
 type Snapshot struct {

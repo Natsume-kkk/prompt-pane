@@ -304,6 +304,256 @@ func TestTurnCompletionRequiresExactActiveTurn(t *testing.T) {
 	}
 }
 
+func TestTurnWatcherRequiresExactCompletion(t *testing.T) {
+	run, err := runcontext.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(run)
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := SendEvent(ctx, run, provider.Event{Kind: provider.SessionStarted, SessionID: "one", Source: provider.SessionSourceStartup}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SendEvent(ctx, run, provider.Event{
+		Kind: provider.PromptSubmitted, SessionID: "one", TurnID: "turn-1",
+		Prompt: &provider.UserPrompt{Text: "first"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	released := make(chan error, 1)
+	go func() {
+		released <- WaitForTurnRelease(ctx, run, "one", "turn-1")
+	}()
+	waitForTurnWatcher(t, server, turnKey{sessionID: "one", turnID: "turn-1"})
+	if err := SendEvent(ctx, run, provider.Event{Kind: provider.TurnCompleted, SessionID: "one", TurnID: "other"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-released:
+		t.Fatalf("wrong turn released watcher: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := SendEvent(ctx, run, provider.Event{Kind: provider.TurnCompleted, SessionID: "one", TurnID: "turn-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-released; err != nil {
+		t.Fatalf("exact completion did not release watcher: %v", err)
+	}
+}
+
+func TestNextDifferentTurnReleasesPreviousWatcher(t *testing.T) {
+	run, err := runcontext.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(run)
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := SendEvent(ctx, run, provider.Event{Kind: provider.SessionStarted, SessionID: "one", Source: provider.SessionSourceStartup}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SendEvent(ctx, run, provider.Event{
+		Kind: provider.PromptSubmitted, SessionID: "one", TurnID: "turn-1",
+		Prompt: &provider.UserPrompt{Text: "first"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	released := make(chan error, 1)
+	go func() {
+		released <- WaitForTurnRelease(ctx, run, "one", "turn-1")
+	}()
+	waitForTurnWatcher(t, server, turnKey{sessionID: "one", turnID: "turn-1"})
+	if err := SendEvent(ctx, run, provider.Event{
+		Kind: provider.PromptSubmitted, SessionID: "one", TurnID: "turn-1",
+		Prompt: &provider.UserPrompt{Text: "queued"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-released:
+		t.Fatalf("same turn released watcher: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := SendEvent(ctx, run, provider.Event{
+		Kind: provider.PromptSubmitted, SessionID: "one", TurnID: "turn-2",
+		Prompt: &provider.UserPrompt{Text: "next"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-released; err != nil {
+		t.Fatalf("next turn did not release previous watcher: %v", err)
+	}
+}
+
+func TestDuplicateTurnWatcherExitsWithoutReplacingOriginal(t *testing.T) {
+	run, err := runcontext.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(run)
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := SendEvent(ctx, run, provider.Event{Kind: provider.SessionStarted, SessionID: "one", Source: provider.SessionSourceStartup}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SendEvent(ctx, run, provider.Event{
+		Kind: provider.PromptSubmitted, SessionID: "one", TurnID: "turn-1",
+		Prompt: &provider.UserPrompt{Text: "first"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	first := make(chan error, 1)
+	go func() {
+		first <- WaitForTurnRelease(ctx, run, "one", "turn-1")
+	}()
+	waitForTurnWatcher(t, server, turnKey{sessionID: "one", turnID: "turn-1"})
+	if err := WaitForTurnRelease(ctx, run, "one", "turn-1"); err != nil {
+		t.Fatalf("duplicate watcher did not exit cleanly: %v", err)
+	}
+	select {
+	case err := <-first:
+		t.Fatalf("duplicate displaced original watcher: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := SendEvent(ctx, run, provider.Event{Kind: provider.TurnCompleted, SessionID: "one", TurnID: "turn-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-first; err != nil {
+		t.Fatalf("original watcher did not receive release: %v", err)
+	}
+}
+
+func TestSessionBoundariesAndServerCloseReleaseTurnWatcher(t *testing.T) {
+	tests := []struct {
+		name  string
+		event *provider.Event
+	}{
+		{
+			name: "same-session resume",
+			event: &provider.Event{
+				Kind: provider.SessionStarted, SessionID: "one", Source: provider.SessionSourceResume,
+			},
+		},
+		{
+			name:  "session end",
+			event: &provider.Event{Kind: provider.SessionEnded, SessionID: "one"},
+		},
+		{
+			name: "new main session",
+			event: &provider.Event{
+				Kind: provider.SessionStarted, SessionID: "two", Source: provider.SessionSourceStartup,
+			},
+		},
+		{name: "server close"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			run, err := runcontext.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			server := NewServer(run)
+			if err := server.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer server.Close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			if err := SendEvent(ctx, run, provider.Event{Kind: provider.SessionStarted, SessionID: "one", Source: provider.SessionSourceStartup}); err != nil {
+				t.Fatal(err)
+			}
+			if err := SendEvent(ctx, run, provider.Event{
+				Kind: provider.PromptSubmitted, SessionID: "one", TurnID: "turn-1",
+				Prompt: &provider.UserPrompt{Text: "first"},
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			released := make(chan error, 1)
+			go func() {
+				released <- WaitForTurnRelease(ctx, run, "one", "turn-1")
+			}()
+			waitForTurnWatcher(t, server, turnKey{sessionID: "one", turnID: "turn-1"})
+			if test.event == nil {
+				if err := server.Close(); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := SendEvent(ctx, run, *test.event); err != nil {
+				t.Fatal(err)
+			}
+			if err := <-released; err != nil {
+				t.Fatalf("turn watcher was not released: %v", err)
+			}
+		})
+	}
+}
+
+func TestSideChatKeepsParentTurnWatcher(t *testing.T) {
+	run, err := runcontext.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(run)
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := SendEvent(ctx, run, provider.Event{Kind: provider.SessionStarted, SessionID: "parent", Source: provider.SessionSourceStartup}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SendEvent(ctx, run, provider.Event{
+		Kind: provider.PromptSubmitted, SessionID: "parent", TurnID: "parent-turn",
+		Prompt: &provider.UserPrompt{Text: "parent"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	released := make(chan error, 1)
+	go func() {
+		released <- WaitForTurnRelease(ctx, run, "parent", "parent-turn")
+	}()
+	waitForTurnWatcher(t, server, turnKey{sessionID: "parent", turnID: "parent-turn"})
+	if err := SendEvent(ctx, run, provider.Event{
+		Kind: provider.SessionStarted, SessionID: "side", Source: provider.SessionSourceStartup, Ephemeral: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-released:
+		t.Fatalf("side chat released parent watcher: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := SendEvent(ctx, run, provider.Event{Kind: provider.TurnCompleted, SessionID: "parent", TurnID: "parent-turn"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-released; err != nil {
+		t.Fatalf("parent completion did not release watcher: %v", err)
+	}
+}
+
 func TestSameTurnSubmissionsRemainDistinctAndMoveActivePrompt(t *testing.T) {
 	run, err := runcontext.New()
 	if err != nil {
@@ -695,4 +945,19 @@ func TestPromptAfterSessionEndIsIgnoredUntilSessionStart(t *testing.T) {
 	if snapshot := server.snapshotLocked(); snapshot.State != "live" || len(snapshot.Prompts) != 1 || snapshot.Prompts[0].Text != "after" {
 		t.Fatalf("resumed session snapshot = %#v", snapshot)
 	}
+}
+
+func waitForTurnWatcher(t *testing.T, server *Server, key turnKey) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		server.mu.Lock()
+		_, watching := server.turnWatchers[key]
+		server.mu.Unlock()
+		if watching {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("turn watcher was not registered")
 }

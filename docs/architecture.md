@@ -4,7 +4,7 @@
 
 Prompt Pane 是独立 Go CLI。Zellij 只负责终端内 70/30 布局，Bubble Tea 只负责右侧 TUI，Codex 官方 Hooks 是实时提示词事实源。程序不调用终端品牌专有 API；能够正常运行受支持 Zellij 的终端均在支持边界内。
 
-Prompt Pane 不搜索 `~/.codex/sessions`、不读取 Codex App Server 历史，也不按时间、目录或进程猜测会话。新主会话、恢复会话和清空后的会话都只显示本次运行期间 `UserPromptSubmit` Hook 实际收到的新提示词；上下文压缩保留本次运行已经显示的记录。`/side`／`/btw` 的父提示词与指标只在当前进程内暂存，返回父会话时恢复，侧聊内容随覆盖层结束丢弃。`Stop` Hook 可以按官方提供的准确 `session_id` 与 `transcript_path` 只读解析当前会话的结构化 usage 元数据。由于 Codex 0.149.0 在用户中断时不会运行 `Stop`，`UserPromptSubmit` 还可以为当前准确 `session_id + turn_id` 启动一个短期观察器：观察器从 Hook 到达时的文件末尾开始，只识别后续结构化 `turn_complete`／`turn_aborted` 类型、`turn_id` 与中止原因，并在终止后退出。两条路径都不得解析或保留 prompt、回复、推理和工具内容，不得扫描目录、回退到最近文件或建立历史索引。
+Prompt Pane 不搜索 `~/.codex/sessions`、不读取 Codex App Server 历史，也不按时间、目录或进程猜测会话。新主会话、恢复会话和清空后的会话都只显示本次运行期间 `UserPromptSubmit` Hook 实际收到的新提示词；上下文压缩保留本次运行已经显示的记录。`/side`／`/btw` 的父提示词与指标只在当前进程内暂存，返回父会话时恢复，侧聊内容随覆盖层结束丢弃。`Stop` Hook 可以按官方提供的准确 `session_id` 与 `transcript_path` 只读解析当前会话的结构化 usage 元数据。由于 Codex 0.149.0 在用户中断时不会运行 `Stop`，`UserPromptSubmit` 还可以为当前准确 `session_id + turn_id` 启动一个短期观察器：观察器同时等待认证 IPC 的精确轮次释放信号，并从 Hook 到达时的 transcript 文件末尾开始只识别后续结构化 `turn_complete`／`turn_aborted` 类型、`turn_id` 与中止原因；任一路径确认该观察已失效后立即退出。两条路径都不得解析或保留 prompt、回复、推理和工具内容，不得扫描目录、回退到最近文件或建立历史索引。
 
 ## 组件与依赖方向
 
@@ -65,10 +65,10 @@ Windows `v1.2.0` 使用当前用户命名管道；其他平台接口保留但不
 每个请求为有上限的 JSON frame：
 
 ```text
-version | run_id | token | type | event?
+version | run_id | token | type | event? | watch?
 ```
 
-`type` 只允许 `event` 或 `subscribe`；只有事件请求携带规范化 `event`。事件请求返回 `ok`，订阅连接持续接收由 `state`、`prompts`、`notice`、可空 `active_turn_id`、可空 `active_prompt_id` 和指标组成的内存快照。`active_turn_id` 是 provider 轮次关联键，`active_prompt_id` 是 viewer 最新提示词的进程内唯一键，两者不得混用。
+`type` 只允许 `event`、`subscribe` 或内部 `watch_turn`；事件请求携带规范化 `event`，轮次观察请求的 `watch` 只携带准确 `session_id + turn_id`，不得携带 prompt、transcript 路径或原始记录。事件请求返回 `ok`；订阅连接持续接收由 `state`、`prompts`、`notice`、可空 `active_turn_id`、可空 `active_prompt_id` 和指标组成的内存快照；轮次观察连接先接收 `watching` 确认，再在该观察器应退出时接收 `release`。`active_turn_id` 是 provider 轮次关联键，`active_prompt_id` 是 viewer 最新提示词的进程内唯一键，两者不得混用。
 
 事件最小集合：
 
@@ -93,7 +93,9 @@ server 必须验证版本、大小、token、`run_id`、事件字段和会话绑
 
 规范化 `SessionMetrics` 使用通用额度窗口列表和 `unknown`／`available`／`unavailable` 可用状态，不向 IPC 发送 Codex 原始 `limit_id`、额度桶名称、路径、原始 JSON 或解析错误。当前运行不为额度查询启动 Codex App Server；其账户接口只用于受控开发验证，避免引入实验性长生命周期依赖和跨会话账户数据源。
 
-`UserPromptSubmit` Hook 必须把官方 `turn_id` 放入事件级轮次字段，每次 Hook 调用都发送一条 `prompt.submitted`；同一轮的排队／转向输入可以复用 `turn_id`，server 不得据此去重。事件发送成功后，可以把准确 transcript 路径、提交时文件偏移、`session_id` 和 `turn_id` 交给同一可执行文件的短期内部观察进程。观察进程必须先用 `session_meta.id` 验证路径归属，只读取该偏移之后追加记录的外层生命周期字段；准确匹配的 `turn_aborted` 立即规范化为 `turn.completed`，`turn_complete` 仅作为 `Stop` Hook 未能送达时的延迟兜底。错会话、错轮次、未知类型、内容字段和旧记录全部忽略。`_hook` 与 `_observe` 是现有工作区的内部叶子进程，只继承公开入口已经建立的 Windows Job Object，不得各自创建会在 Hook 返回时连带终止观察器的嵌套 `KILL_ON_JOB_CLOSE` Job；观察器在单轮终止或工作区退出后结束。启动、解析或 IPC 失败不得阻塞 Codex，也不得输出 transcript 路径或原始记录。
+`UserPromptSubmit` Hook 必须把官方 `turn_id` 放入事件级轮次字段，每次 Hook 调用都发送一条 `prompt.submitted`；同一轮的排队／转向输入可以复用 `turn_id`，server 不得据此去重。事件发送成功后，可以把准确 transcript 路径、提交时文件偏移、`session_id` 和 `turn_id` 交给同一可执行文件的短期内部观察进程。观察进程必须先通过认证 IPC 注册准确 `session_id + turn_id`；server 对同一键只保留一个有效观察器，重复进程立即退出。准确 `Stop` 到达、同会话下一条不同 `turn_id` 的提示词到达、会话边界重置或本次 server 关闭时，server 必须释放对应观察器；同一 `turn_id` 的排队／转向输入不得释放当前观察器。即使释放信号早于观察进程注册，server 也必须根据当前活动轮次让迟到观察器立即退出。
+
+观察进程与 IPC 释放通道并行读取 transcript：先用 `session_meta.id` 验证路径归属，只读取提交偏移之后追加记录的外层生命周期字段；准确匹配的 `turn_aborted` 立即规范化为 `turn.completed`，`turn_complete` 仅作为 `Stop` Hook 未能送达时的延迟兜底。错会话、错轮次、未知类型、内容字段和旧记录全部忽略；IPC 注册失败时仍允许 transcript 兜底，transcript 打开或格式识别失败时仍等待认证 IPC 释放。`_hook` 与 `_observe` 是现有工作区的内部叶子进程，只继承公开入口已经建立的 Windows Job Object，不得各自创建会在 Hook 返回时连带终止观察器的嵌套 `KILL_ON_JOB_CLOSE` Job；观察器在单轮终止、被下一轮替换或工作区退出后结束。启动、解析或 IPC 失败不得阻塞 Codex，也不得输出 transcript 路径或原始记录。
 
 Codex 0.149.0 的输入路径按官方实现归一化：普通用户输入和每条排队／转向输入都会经过 `UserPromptSubmit`；`/plan <请求>` 与 `/side <请求>`／`/btw <请求>` 最终提交请求正文；`/goal` 系列走目标控制面，不经过该 Hook。Prompt Pane 只显示前一类官方事件，不从本地命令历史、目标状态或 transcript 补造控制命令。
 

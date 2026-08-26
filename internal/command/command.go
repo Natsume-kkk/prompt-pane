@@ -571,19 +571,68 @@ func (a App) observe(args []string) int {
 func observeTurn(run runcontext.Context, observation codex.TurnObservation) error {
 	ctx, cancel := context.WithTimeout(context.Background(), turnObservationTimeout)
 	defer cancel()
-	end, err := codex.WaitForTurnEnd(ctx, observation)
-	if err != nil {
-		return err
+	type transcriptResult struct {
+		end codex.TurnEnd
+		err error
 	}
-	if end == codex.TurnEndComplete {
-		timer := time.NewTimer(stopHookFallbackDelay)
-		defer timer.Stop()
+	transcriptResults := make(chan transcriptResult, 1)
+	go func() {
+		end, err := codex.WaitForTurnEnd(ctx, observation)
+		transcriptResults <- transcriptResult{end: end, err: err}
+	}()
+	releaseResults := make(chan error, 1)
+	go func() {
+		releaseResults <- ipc.WaitForTurnRelease(ctx, run, observation.SessionID, observation.TurnID)
+	}()
+
+	var transcriptErr error
+	for {
 		select {
+		case result := <-transcriptResults:
+			transcriptResults = nil
+			if result.err != nil {
+				transcriptErr = result.err
+				if releaseResults == nil {
+					return transcriptErr
+				}
+				continue
+			}
+			if result.end == codex.TurnEndComplete {
+				timer := time.NewTimer(stopHookFallbackDelay)
+				defer timer.Stop()
+				for {
+					select {
+					case releaseErr := <-releaseResults:
+						releaseResults = nil
+						if releaseErr == nil {
+							return nil
+						}
+					case <-ctx.Done():
+						return ctx.Err()
+					case <-timer.C:
+						return sendObservedTurnCompletion(run, observation)
+					}
+				}
+			}
+			return sendObservedTurnCompletion(run, observation)
+		case releaseErr := <-releaseResults:
+			releaseResults = nil
+			if releaseErr == nil {
+				return nil
+			}
+			if transcriptResults == nil {
+				if transcriptErr != nil {
+					return transcriptErr
+				}
+				return releaseErr
+			}
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-timer.C:
 		}
 	}
+}
+
+func sendObservedTurnCompletion(run runcontext.Context, observation codex.TurnObservation) error {
 	sendContext, sendCancel := ipc.HookContext()
 	defer sendCancel()
 	return ipc.SendEvent(sendContext, run, provider.Event{
