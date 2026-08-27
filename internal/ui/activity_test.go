@@ -398,7 +398,7 @@ func TestActiveViewerFitsRequiredTerminalSizes(t *testing.T) {
 				t.Fatalf("%dx%d line %d width = %d: %q", size[0], size[1], index, width, line)
 			}
 		}
-		if !strings.Contains(output, " .") || strings.ContainsAny(output, "◆·") {
+		if !strings.Contains(output, " .") || strings.Contains(output, "◆") {
 			t.Fatalf("%dx%d did not render text and dots: %q", size[0], size[1], output)
 		}
 	}

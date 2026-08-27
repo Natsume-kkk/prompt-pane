@@ -89,13 +89,14 @@ codex.pp resume
 | 跳到第一条／最新一条 | `Home`／`End` |
 | 展开／折叠长 prompt | `Enter` |
 | 打开设置 | `s` |
+| 隐藏／恢复右侧提示词 | 先聚焦左侧 Codex，再按 `Alt+P` |
 | 设置中选择／打开 | `↑`／`↓`、`Enter` |
 | 帮助／关于中翻页 | `↑`／`↓`、`PgUp`／`PgDn` 或滚轮 |
 | 关闭右侧 viewer | `Ctrl+X` |
 | 退出整个工作区 | 关闭终端或使用 Zellij 的 `Ctrl+Q` |
 | 复制可见文字 | 按住左键拖动，松开后复制 |
 
-关闭 viewer 不会退出左侧 Codex；关闭终端会结束当前 Prompt Pane 工作区及其中的 Codex。如果拖动无法复制，可以按住 `Shift` 使用终端原生选择。
+右侧底栏会提示 `Alt+P`：在左侧 Codex 工作时按一次可隐藏提示词窗格，再按一次恢复；隐藏期间 viewer 仍会接收当前运行的新提示词。关闭 viewer 不会退出左侧 Codex；关闭终端会结束当前 Prompt Pane 工作区及其中的 Codex。如果拖动无法复制，可以按住 `Shift` 使用终端原生选择。
 
 右侧 Zellij 窗格标题固定显示 `PROMPTS`；Prompt Pane 的主题只管理右侧 viewer 内部颜色，不修改 Zellij 外层边框主题。
 

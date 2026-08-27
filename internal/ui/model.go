@@ -1101,7 +1101,7 @@ func (m Model) renderFooter() string {
 		return left
 	}
 
-	actions := m.settingsAction()
+	actions := m.viewerActions()
 	switch m.overlay {
 	case overlayHelp:
 		label, multiplePages := m.overlayPageInfo(m.uiText("帮助", "Help"))
@@ -1248,10 +1248,12 @@ func (m Model) helpLines() []string {
 	helpScrollAction := m.uiText("整页滚动帮助", "Scroll help by page")
 	settingsEnterAction := m.uiText("打开页面或切换语言", "Open page or switch language")
 	settingsCloseAction := m.uiText("关闭设置", "Close settings")
+	paneToggleAction := m.uiText("隐藏/恢复右侧提示词", "Hide/show prompt pane")
 	if m.width < 52 {
 		helpScrollAction = m.uiText("翻页", "Page scroll")
 		settingsEnterAction = m.uiText("打开/切换", "Open/switch")
 		settingsCloseAction = m.uiText("关闭", "Close")
+		paneToggleAction = m.uiText("隐藏/恢复右侧", "Hide/show prompts")
 	}
 	if m.width < 24 {
 		promptControlsHeading = m.uiText(" 提示词 · 页外", " Prompt · outside")
@@ -1329,6 +1331,8 @@ func (m Model) helpLines() []string {
 			m.uiText("   ?N 未跟踪文件", "   ?N Untracked"),
 			"",
 			paneHeading,
+			m.uiText("   Alt+P  隐藏/恢复", "   Alt+P  Hide/show"),
+			m.uiText("   先聚焦 Codex", "   Focus Codex first"),
 			m.uiText("   Alt+←/→ 聚焦", "   Alt+←/→ Focus"),
 			m.uiText("   拖动边缘 调整", "   Drag edge Resize"),
 			m.uiText("   Alt+=/- 调整", "   Alt+=/- Resize"),
@@ -1393,6 +1397,8 @@ func (m Model) helpLines() []string {
 			)
 		}
 		entries = append(entries, "", paneHeading,
+			m.helpEntry("Alt+P", paneToggleAction),
+			m.styleMuted(m.uiText("   先聚焦左侧 Codex", "   Focus left Codex first")),
 			m.helpEntry("Alt+←/→", m.uiText("聚焦窗格", "Focus pane")),
 			m.helpEntry(m.uiText("拖动边缘", "Drag edge"), m.uiText("调整窗格大小", "Resize panes")),
 		)
@@ -1695,7 +1701,7 @@ func (m Model) renderStatusHeader() string {
 	available := max(1, m.width-1)
 	right := ""
 	if m.width >= 20 {
-		right = m.styleAction(m.settingsAction())
+		right = m.styleAction(m.viewerActions())
 	}
 	total := ""
 	if metrics != nil {
@@ -1742,11 +1748,13 @@ func (m Model) renderStatusHeader() string {
 	return prefixStatus(left + strings.Repeat(" ", gap) + right)
 }
 
-func (m Model) settingsAction() string {
-	if m.width < 21 {
-		return "[s]"
+func (m Model) viewerActions() string {
+	hide := m.uiText("[Alt+P] 隐藏", "[Alt+P] hide")
+	full := hide + " · " + m.uiText("[s] 设置", "[s] settings")
+	if ansi.StringWidth(full)+2 <= m.width {
+		return full
 	}
-	return m.uiText("[s] 设置", "[s] settings")
+	return hide + " · [s]"
 }
 
 func joinStatusPieces(pieces ...string) string {

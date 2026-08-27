@@ -23,6 +23,11 @@ func Layout(executable string, codexArgs []string) string {
         }
     }
 }
+keybinds {
+    shared_except "locked" {
+        bind "Alt p" { ToggleFocusFullscreen; }
+    }
+}
 `, quote(executable), quoteArgs(agentArgs), quote(executable))
 }
 

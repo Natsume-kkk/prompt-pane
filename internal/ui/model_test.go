@@ -81,8 +81,27 @@ func TestNewUsesConfiguredChineseInterface(t *testing.T) {
 	if model.interfaceLanguage != config.InterfaceLanguageChinese {
 		t.Fatalf("default interface language = %q", model.interfaceLanguage)
 	}
-	if output := model.render(); !strings.Contains(output, "等待第一条提示词") || strings.Contains(output, "[READY]") || !strings.Contains(output, "[s] 设置") || strings.Contains(output, "[s] settings") {
+	if output := model.render(); !strings.Contains(output, "等待第一条提示词") || strings.Contains(output, "[READY]") || !strings.Contains(output, "[Alt+P] 隐藏 · [s] 设置") || strings.Contains(output, "[s] settings") {
 		t.Fatalf("default interface did not localize user-facing status copy: %q", output)
+	}
+}
+
+func TestViewerFooterAdvertisesResponsiveHideShortcut(t *testing.T) {
+	for _, test := range []struct {
+		language string
+		width    int
+		want     string
+	}{
+		{language: config.InterfaceLanguageChinese, width: 20, want: "[Alt+P] 隐藏 · [s]"},
+		{language: config.InterfaceLanguageChinese, width: 32, want: "[Alt+P] 隐藏 · [s] 设置"},
+		{language: config.InterfaceLanguageEnglish, width: 20, want: "[Alt+P] hide · [s]"},
+		{language: config.InterfaceLanguageEnglish, width: 32, want: "[Alt+P] hide · [s] settings"},
+	} {
+		model := Model{width: test.width, height: 20, noColor: true, interfaceLanguage: test.language, snapshot: ipc.Snapshot{State: "live"}}
+		footer := model.renderFooter()
+		if !strings.Contains(footer, test.want) || ansi.StringWidth(footer) > test.width {
+			t.Fatalf("language=%s width=%d hide footer = %q, want %q", test.language, test.width, footer, test.want)
+		}
 	}
 }
 
@@ -1427,7 +1446,7 @@ func TestThemeSemanticPreviewUsesVisibleThemeRoles(t *testing.T) {
 			styled(roles.ActivityIndicator, "Pondering "),
 			styled(roles.ActivityIndicator, "..."),
 			styled(roles.Accent, "↓ 3 prompts below"),
-			styled(roles.Accent, "[s] settings"),
+			styled(roles.Accent, model.viewerActions()),
 			styled(roles.Token, "Total: 2.4M"),
 			styled(roles.Model, "gpt-5.6"),
 			styled(roles.Label, "5h: "),
@@ -1810,7 +1829,7 @@ func TestEveryThemeEmphasizesSelectedPromptWithoutColoringItsIndex(t *testing.T)
 		roles := theme.Derive(theme.Resolve(name, false))
 		focus := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(roles.BodyText)).Render("  2 ")
 		body := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(roles.BodyText)).Render("second")
-		action := lipgloss.NewStyle().Foreground(lipgloss.Color(roles.Accent)).Render("[s] settings")
+		action := lipgloss.NewStyle().Foreground(lipgloss.Color(roles.Accent)).Render(model.viewerActions())
 		if strings.Contains(output, "[LIVE]") || !strings.Contains(ansi.Strip(output), "  1 first") || !strings.Contains(output, focus+body) || !strings.Contains(output, action) {
 			t.Fatalf("theme=%s roles were not shared by index, selection and help action: %q", name, output)
 		}
@@ -2431,7 +2450,7 @@ func TestReadyTroubleshootingIsResponsive(t *testing.T) {
 		model := Model{width: size[0], height: size[1], noColor: true, snapshot: ipc.Snapshot{State: "ready"}}
 		footer := model.renderFooter()
 		settingsAction := "[s] settings"
-		if size[0] == 20 {
+		if size[0] < 29 {
 			settingsAction = "[s]"
 		}
 		if !strings.Contains(footer, settingsAction) || strings.Contains(footer, "troubleshoot") {

@@ -140,7 +140,7 @@ type Event struct {
 - 优先使用 `PATH` 中经过版本检查的 Zellij。
 - 缺失时由 `setup` 或首次引导自动下载固定版本，验证 SHA-256，安装到用户级 Prompt Pane 数据目录。
 - 不修改 PowerShell Profile、系统 `PATH` 或用户全局 Zellij 配置。
-- 临时 layout 使用左 70%、右 30%，左侧初始聚焦并保持原有标题，右侧固定标题为 `PROMPTS`。启动 argv 仅为本次会话覆盖 `mouse_hover_effects=false` 与 `mouse_click_through=true`：前者隐藏窗格边框悬停高亮和 resize 帮助文字，同时保留 `advanced_mouse_actions`、窗格边框与鼠标 resize；后者让首次聚焦点击同时送达目标窗格，使 viewer 可直接开始拖选。两项覆盖适用于 Prompt Pane 创建的整个 Zellij 会话，因此左侧 Codex 的首次聚焦点击也会送达 Codex；程序不启用经过即切换键盘焦点的 `focus_follows_mouse`，不接管 Zellij 主题，也不修改用户全局 Zellij 配置。右侧 viewer command pane 不使用 `close_on_exit`，避免初始化、IPC 或 TUI 失败时吞掉错误；启动器通过本次运行的 `PROMPT_PANE_ZELLIJ_PATH` 传递已发现的 Zellij 绝对路径，viewer 收到 `Ctrl+X` 后由命令编排层使用当前 `ZELLIJ_PANE_ID` 定向关闭右侧窗格。关闭失败时保留 pane 和错误，左侧 Codex 不受影响。
+- 临时 layout 使用左 70%、右 30%，左侧初始聚焦并保持原有标题，右侧固定标题为 `PROMPTS`。layout 在非 locked 模式覆盖 `Alt+P` 为单一 `ToggleFocusFullscreen` 动作，使用户聚焦左侧时隐藏／恢复右侧；不组合无顺序保证的多动作，也不关闭或重建 viewer。启动 argv 仅为本次会话覆盖 `mouse_hover_effects=false` 与 `mouse_click_through=true`：前者隐藏窗格边框悬停高亮和 resize 帮助文字，同时保留 `advanced_mouse_actions`、窗格边框与鼠标 resize；后者让首次聚焦点击同时送达目标窗格，使 viewer 可直接开始拖选。两项覆盖适用于 Prompt Pane 创建的整个 Zellij 会话，因此左侧 Codex 的首次聚焦点击也会送达 Codex；程序不启用经过即切换键盘焦点的 `focus_follows_mouse`，不接管 Zellij 主题，也不修改用户全局 Zellij 配置。右侧 viewer command pane 不使用 `close_on_exit`，避免初始化、IPC 或 TUI 失败时吞掉错误；启动器通过本次运行的 `PROMPT_PANE_ZELLIJ_PATH` 传递已发现的 Zellij 绝对路径，viewer 收到 `Ctrl+X` 后由命令编排层使用当前 `ZELLIJ_PANE_ID` 定向关闭右侧窗格。关闭失败时保留 pane 和错误，左侧 Codex 不受影响。
 - Prompt Pane 创建的会话同时覆盖 `on_force_close=quit`，用于 Zellij 能收到关闭信号的正常路径。Windows 公开程序入口持有启用 `KILL_ON_JOB_CLOSE` 的匿名 Job Object，环境检查、安装、Zellij、Codex、viewer 及其后代继承同一进程树约束；Hook 和轮次观察器等内部叶子进程沿用该约束，不重复取得短命 Job 所有权。终端直接销毁入口时，操作系统随 Job 句柄关闭结束本次运行的全部子进程。Job 不按进程名或会话名扫描，不修改用户全局配置，也不影响其他 Prompt Pane 或 Zellij 会话。
 
 ## 安装事务与活动工作区
