@@ -89,7 +89,7 @@ server 必须验证版本、大小、token、`run_id`、事件字段和会话绑
 4. 通过 IPC 发送规范化事件。
 5. 成功时不向 stdout 写 prompt 或额外上下文。
 
-`Stop` Hook 必须验证官方提供的 `turn_id`，并始终发送 `turn.completed`。它只按本次 payload 的准确 `transcript_path` 逐行筛选 `session_meta`、`turn_context` 和 `token_count`；不提供最近文件回退，不把路径、原始行或内容字段送入 IPC。指标适配器同时接受旧版单额度桶和新版按 `limit_id` 分组的多额度桶：多桶结构固定选择键为 `codex` 的默认桶，即使兼容 `rate_limits` 同时携带完整的具名特殊桶也不得覆盖；旧版单桶只在自身 `limit_id == "codex"` 且至少包含一个窗口时接受。默认桶缺失时不得按模型名称、目录、唯一剩余桶或最近使用情况猜测，必须把额度标记为不可用。额度窗口按上游分钟数规范化并排序，不固定假设 `primary` 为 5h 或 `secondary` 为 7d；额度缺失或结构不受支持不得丢弃同一记录中已经验证的 token、上下文、模型和 Git 指标。`transcript_path` 为空或整体指标解析失败时只省略指标，仍发送完成事件并保持 Codex 可用。
+`Stop` Hook 必须验证官方提供的 `turn_id`，并始终发送 `turn.completed`。它只按本次 payload 的准确 `transcript_path` 逐行筛选 `session_meta`、`turn_context` 和 `token_count`；不提供最近文件回退，不把路径、原始行或内容字段送入 IPC。指标适配器同时接受旧版单额度桶和新版按 `limit_id` 分组的多额度桶：多桶结构固定选择键为 `codex` 的默认桶，即使兼容 `rate_limits` 同时携带完整的具名特殊桶也不得覆盖；旧版单桶只在自身 `limit_id == "codex"` 且至少包含一个窗口时接受。同一准确 transcript 内，后续缺少额度或只含具名特殊桶的 `token_count` 不得抹掉最近一条有效默认桶快照；后续有效默认桶完整替换旧快照。额度快照只属于当前主会话，不通过 IPC、磁盘缓存或进程间共享传播到其他会话或工作区。默认桶缺失时不得按模型名称、目录、唯一剩余桶或最近使用情况猜测，必须把额度标记为不可用。额度窗口按上游分钟数规范化并排序，不固定假设 `primary` 为 5h 或 `secondary` 为 7d；到达 `resets_at` 且没有更新快照的窗口必须省略，不得从过期值推断新周期为 `0%`。额度缺失或结构不受支持不得丢弃同一记录中已经验证的 token、上下文、模型和 Git 指标。`transcript_path` 为空或整体指标解析失败时只省略指标，仍发送完成事件并保持 Codex 可用。
 
 规范化 `SessionMetrics` 使用通用额度窗口列表和 `unknown`／`available`／`unavailable` 可用状态，不向 IPC 发送 Codex 原始 `limit_id`、额度桶名称、路径、原始 JSON 或解析错误。当前运行不为额度查询启动 Codex App Server；其账户接口只用于受控开发验证，避免引入实验性长生命周期依赖和跨会话账户数据源。
 

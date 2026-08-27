@@ -63,6 +63,7 @@ func readMetrics(path, expectedSessionID, hookCWD, hookModel string) (*provider.
 	metrics := &provider.SessionMetrics{Model: hookModel}
 	cwd := hookCWD
 	transcriptSessionID := ""
+	var latestRateLimits *rateLimitSnapshot
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64<<10), maxTranscriptLine)
 	for scanner.Scan() {
@@ -99,9 +100,9 @@ func readMetrics(path, expectedSessionID, hookCWD, hookModel string) (*provider.
 			if window > 0 {
 				metrics.ContextUsedPercent = float64(record.Payload.Info.LastTokenUsage.InputTokens) * 100 / float64(window)
 			}
-			limits, status := activeRateLimits(record.Payload.RateLimits, record.Payload.RateLimitsByLimitID)
-			metrics.Quotas = quotaWindows(limits, time.Now())
-			metrics.QuotaStatus = status
+			if limits, ok := activeRateLimits(record.Payload.RateLimits, record.Payload.RateLimitsByLimitID); ok {
+				latestRateLimits = limits
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -110,18 +111,29 @@ func readMetrics(path, expectedSessionID, hookCWD, hookModel string) (*provider.
 	if transcriptSessionID == "" || transcriptSessionID != expectedSessionID {
 		return nil, fmt.Errorf("current transcript does not match the active session")
 	}
+	metrics.QuotaStatus = provider.QuotaUnavailable
+	if latestRateLimits != nil {
+		metrics.Quotas = quotaWindows(latestRateLimits, time.Now())
+		if len(metrics.Quotas) > 0 {
+			metrics.QuotaStatus = provider.QuotaAvailable
+		}
+	}
 	addGitMetrics(metrics, cwd)
 	return metrics, nil
 }
 
-func activeRateLimits(single *rateLimitSnapshot, byID map[string]rateLimitSnapshot) (*rateLimitSnapshot, provider.QuotaStatus) {
-	if limits, ok := byID["codex"]; ok {
-		return &limits, provider.QuotaAvailable
+func activeRateLimits(single *rateLimitSnapshot, byID map[string]rateLimitSnapshot) (*rateLimitSnapshot, bool) {
+	if limits, ok := byID["codex"]; ok && hasQuotaWindow(&limits) {
+		return &limits, true
 	}
-	if single != nil && single.LimitID == "codex" && (single.Primary != nil || single.Secondary != nil) {
-		return single, provider.QuotaAvailable
+	if single != nil && single.LimitID == "codex" && hasQuotaWindow(single) {
+		return single, true
 	}
-	return nil, provider.QuotaUnavailable
+	return nil, false
+}
+
+func hasQuotaWindow(limits *rateLimitSnapshot) bool {
+	return limits != nil && (limits.Primary != nil && limits.Primary.WindowMinutes > 0 || limits.Secondary != nil && limits.Secondary.WindowMinutes > 0)
 }
 
 func quotaWindows(limits *rateLimitSnapshot, now time.Time) []provider.QuotaWindow {
@@ -130,16 +142,12 @@ func quotaWindows(limits *rateLimitSnapshot, now time.Time) []provider.QuotaWind
 	}
 	quotas := make([]provider.QuotaWindow, 0, 2)
 	for _, limit := range []*rateLimitBucket{limits.Primary, limits.Secondary} {
-		if limit == nil || limit.WindowMinutes <= 0 {
+		if limit == nil || limit.WindowMinutes <= 0 || limit.ResetsAt > 0 && limit.ResetsAt <= now.Unix() {
 			continue
-		}
-		usedPercent := limit.UsedPercent
-		if limit.ResetsAt > 0 && limit.ResetsAt <= now.Unix() {
-			usedPercent = 0
 		}
 		quotas = append(quotas, provider.QuotaWindow{
 			WindowMinutes: limit.WindowMinutes,
-			UsedPercent:   usedPercent,
+			UsedPercent:   limit.UsedPercent,
 			ResetsAt:      limit.ResetsAt,
 		})
 	}

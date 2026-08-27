@@ -68,10 +68,9 @@ func TestReadMetricsAdaptsCurrentQuotaShapesWithoutGuessingModels(t *testing.T) 
 			status: provider.QuotaUnavailable,
 		},
 		{
-			name:       "expired quota keeps window but resets usage",
+			name:       "expired quota is unavailable without a fresh snapshot",
 			rateLimits: `,"rate_limits":{"limit_id":"codex","primary":{"used_percent":88,"window_minutes":300,"resets_at":1}}`,
-			status:     provider.QuotaAvailable,
-			windows:    []provider.QuotaWindow{{WindowMinutes: 300, UsedPercent: 0, ResetsAt: 1}},
+			status:     provider.QuotaUnavailable,
 		},
 	}
 
@@ -99,6 +98,60 @@ func TestReadMetricsAdaptsCurrentQuotaShapesWithoutGuessingModels(t *testing.T) 
 				if metrics.Quotas[index] != test.windows[index] {
 					t.Fatalf("quota %d = %#v, want %#v", index, metrics.Quotas[index], test.windows[index])
 				}
+			}
+		})
+	}
+}
+
+func TestReadMetricsKeepsLatestValidDefaultQuotaAcrossSparseRecords(t *testing.T) {
+	tests := []struct {
+		name           string
+		following      []string
+		wantUsed       float64
+		wantTotal      int64
+		wantContextPct float64
+	}{
+		{
+			name: "missing and special records do not erase the default snapshot",
+			following: []string{
+				`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":2000},"last_token_usage":{"input_tokens":48000},"model_context_window":128000}}}}`,
+				`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":3000},"last_token_usage":{"input_tokens":64000},"model_context_window":128000},"rate_limits":{"limit_id":"codex_bengalfox","primary":{"used_percent":1,"window_minutes":300,"resets_at":9999999999}}}}`,
+			},
+			wantUsed:       17,
+			wantTotal:      3000,
+			wantContextPct: 50,
+		},
+		{
+			name: "newer default snapshot replaces the older snapshot",
+			following: []string{
+				`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":4000},"last_token_usage":{"input_tokens":96000},"model_context_window":128000},"rate_limits_by_limit_id":{"codex":{"primary":{"used_percent":29,"window_minutes":10080,"resets_at":9999999999}}}}}`,
+			},
+			wantUsed:       29,
+			wantTotal:      4000,
+			wantContextPct: 75,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "current.jsonl")
+			lines := []string{
+				`{"type":"session_meta","payload":{"id":"thr_exact"}}`,
+				`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":1000},"last_token_usage":{"input_tokens":32000},"model_context_window":128000},"rate_limits":{"limit_id":"codex","primary":{"used_percent":17,"window_minutes":10080,"resets_at":9999999999}}}}`,
+			}
+			lines = append(lines, test.following...)
+			if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			metrics, err := readMetrics(path, "thr_exact", "", "gpt-5.6")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if metrics.TotalTokens != test.wantTotal || metrics.ContextUsedPercent != test.wantContextPct {
+				t.Fatalf("latest non-quota metrics = %#v", metrics)
+			}
+			if metrics.QuotaStatus != provider.QuotaAvailable || len(metrics.Quotas) != 1 || metrics.Quotas[0].UsedPercent != test.wantUsed {
+				t.Fatalf("quota snapshot = %#v", metrics)
 			}
 		})
 	}
