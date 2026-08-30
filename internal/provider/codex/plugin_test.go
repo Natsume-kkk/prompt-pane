@@ -158,8 +158,17 @@ func TestPluginEnabledIsScopedToExactPluginSection(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if pluginEnabled(home) {
-		t.Fatal("another plugin or disabled Prompt Pane was accepted")
+	state := inspectPluginConfig(home)
+	if !state.present || state.enabled || pluginEnabled(home) {
+		t.Fatalf("disabled plugin config state = %#v", state)
+	}
+	config = "[plugins.\"prompt-pane@prompt-pane\"]\n"
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state = inspectPluginConfig(home)
+	if !state.present || !state.enabled || !pluginEnabled(home) {
+		t.Fatalf("default-enabled plugin config state = %#v", state)
 	}
 }
 
@@ -224,6 +233,9 @@ func TestInstallationSnapshotRestoresMarketplaceAndRegistration(t *testing.T) {
 	if err := os.WriteFile(newFile, []byte("new marketplace"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(codexConfig, "config.toml"), []byte("[plugins.\"prompt-pane@prompt-pane\"]\nenabled = false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := snapshot.Restore(); err != nil {
 		t.Fatal(err)
 	}
@@ -233,5 +245,112 @@ func TestInstallationSnapshotRestoresMarketplaceAndRegistration(t *testing.T) {
 	}
 	if _, err := os.Stat(newFile); !os.IsNotExist(err) {
 		t.Fatalf("failed marketplace content remained: %v", err)
+	}
+	restoredConfig, err := os.ReadFile(filepath.Join(codexConfig, "config.toml"))
+	if err != nil || string(restoredConfig) != config {
+		t.Fatalf("restored config = %q, err = %v", restoredConfig, err)
+	}
+}
+
+func TestInstallationSnapshotRestoresDisabledPluginState(t *testing.T) {
+	root := t.TempDir()
+	promptPaneHome := filepath.Join(root, "prompt-pane-home")
+	codexConfig := filepath.Join(root, "codex-home")
+	t.Setenv("PROMPT_PANE_HOME", promptPaneHome)
+	t.Setenv("CODEX_HOME", codexConfig)
+	if err := os.MkdirAll(codexConfig, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	originalConfig := "model = \"gpt-5.6\"\n\n[plugins.\"prompt-pane@prompt-pane\"]\nenabled = false\n"
+	configPath := filepath.Join(codexConfig, "config.toml")
+	if err := os.WriteFile(configPath, []byte(originalConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	codexPath := filepath.Join(root, "codex.cmd")
+	command := "@echo {\"installed\":[{\"name\":\"prompt-pane\",\"installed\":true,\"enabled\":false,\"marketplaceName\":\"prompt-pane\"}]}\r\n"
+	if err := os.WriteFile(codexPath, []byte(command), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marketplace, err := marketplaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldFile := filepath.Join(marketplace, "plugins", pluginName, "old.txt")
+	if err := os.MkdirAll(filepath.Dir(oldFile), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(oldFile, []byte("disabled plugin"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := CaptureInstallation(codexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snapshot.Discard()
+	if !snapshot.registered || snapshot.enabled {
+		t.Fatalf("captured state = registered %v, enabled %v", snapshot.registered, snapshot.enabled)
+	}
+	if err := os.WriteFile(configPath, []byte("[plugins.\"prompt-pane@prompt-pane\"]\nenabled = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(marketplace); err != nil {
+		t.Fatal(err)
+	}
+	if err := snapshot.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	config, err := os.ReadFile(configPath)
+	if err != nil || string(config) != originalConfig {
+		t.Fatalf("restored config = %q, err = %v", config, err)
+	}
+	data, err := os.ReadFile(oldFile)
+	if err != nil || string(data) != "disabled plugin" {
+		t.Fatalf("restored marketplace = %q, err = %v", data, err)
+	}
+}
+
+func TestInstallationSnapshotRemovesNewPluginState(t *testing.T) {
+	root := t.TempDir()
+	promptPaneHome := filepath.Join(root, "prompt-pane-home")
+	codexConfig := filepath.Join(root, "codex-home")
+	t.Setenv("PROMPT_PANE_HOME", promptPaneHome)
+	t.Setenv("CODEX_HOME", codexConfig)
+	if err := os.MkdirAll(codexConfig, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	codexPath := filepath.Join(root, "codex.cmd")
+	if err := os.WriteFile(codexPath, []byte("@echo {\"installed\":[]}\r\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := CaptureInstallation(codexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snapshot.Discard()
+	if snapshot.registered || snapshot.enabled || snapshot.rootExists {
+		t.Fatalf("captured unexpected installation: %#v", snapshot)
+	}
+	marketplace, err := marketplaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(marketplace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(marketplace, "new.txt"), []byte("new marketplace"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(codexConfig, "config.toml")
+	if err := os.WriteFile(configPath, []byte("[plugins.\"prompt-pane@prompt-pane\"]\nenabled = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := snapshot.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marketplace); !os.IsNotExist(err) {
+		t.Fatalf("new marketplace remained: %v", err)
+	}
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		t.Fatalf("new Codex config remained: %v", err)
 	}
 }

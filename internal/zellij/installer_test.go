@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Natsume-kkk/prompt-pane/internal/filetxn"
 	"github.com/Natsume-kkk/prompt-pane/internal/paths"
 )
 
@@ -71,5 +72,51 @@ func TestPreflightManagedInstallAccessSupportsUnicodePath(t *testing.T) {
 	}
 	if _, err := os.Stat(home); !os.IsNotExist(err) {
 		t.Fatalf("preflight-created directory was not cleaned: %v", err)
+	}
+}
+
+func TestWriteManagedBinaryPreservesExistingTargetWhenReplaceFails(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "zellij.exe")
+	if err := os.WriteFile(target, []byte("existing Zellij"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	replaceErr := errors.New("synthetic replace failure")
+	err := writeManagedBinary(target, []byte("new Zellij"), func(source, destination string) error {
+		if destination != target {
+			t.Fatalf("replacement destination = %q, want %q", destination, target)
+		}
+		data, readErr := os.ReadFile(source)
+		if readErr != nil || string(data) != "new Zellij" {
+			t.Fatalf("staged Zellij = %q, err = %v", data, readErr)
+		}
+		return replaceErr
+	})
+	if !errors.Is(err, replaceErr) {
+		t.Fatalf("replacement error = %v", err)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil || string(data) != "existing Zellij" {
+		t.Fatalf("existing Zellij = %q, err = %v", data, err)
+	}
+	entries, err := os.ReadDir(filepath.Dir(target))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != filepath.Base(target) {
+		t.Fatalf("temporary Zellij file remained: %v", entries)
+	}
+}
+
+func TestWriteManagedBinaryReplacesExistingTarget(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "zellij.exe")
+	if err := os.WriteFile(target, []byte("existing Zellij"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeManagedBinary(target, []byte("new Zellij"), filetxn.Replace); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil || string(data) != "new Zellij" {
+		t.Fatalf("installed Zellij = %q, err = %v", data, err)
 	}
 }

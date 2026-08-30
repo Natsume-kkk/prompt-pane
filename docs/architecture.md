@@ -60,7 +60,7 @@ created -> workspace_started -> session_bound -> live -> ended
 
 ## IPC 协议
 
-Windows `v1.2.0` 使用当前用户命名管道；其他平台接口保留但不承诺可用。每次运行使用不可预测 endpoint 和至少 256-bit token。Hook 原始输入上限为 1 MiB，认证 IPC frame 上限为 8 MiB，为 JSON 转义保留空间；超限只返回不含 payload 的安全错误。
+Windows `v1.3.0` 使用当前用户命名管道；其他平台接口保留但不承诺可用。每次运行使用不可预测 endpoint 和至少 256-bit token。Hook 原始输入上限为 1 MiB，认证 IPC frame 上限为 8 MiB，为 JSON 转义保留空间；超限只返回不含 payload 的安全错误。
 
 每个请求为有上限的 JSON frame：
 
@@ -148,7 +148,7 @@ type Event struct {
 - 用户级安装由两个角色组成：`PromptPane\bin\prompt-pane.exe` 与 `codex.pp.exe` 是稳定入口，`PromptPane\versions\<sha256>\prompt-pane.exe` 是不可变运行版本。两类文件都由同一个发布可执行文件复制得到；稳定入口只读取 schema 1 安装状态、调用受管版本并原样转发 argv，不加载 prompt 或会话数据。安装状态只保存版本号、内容摘要以及 `current`、`pending`、`previous` 三个引用，引用必须是 64 位十六进制摘要且只能解析到受管版本目录。
 - 每个工作区持有当前用户范围的共享活动锁。显式升级可以在共享锁存在时校验并写入新的不可变版本，再原子更新 `pending`；不得修改 `current`、插件或稳定入口。旧工作区活动期间的其他启动继续解析 `current`，因此同一时刻所有工作区和全局 Codex 插件始终属于同一版本。
 - 稳定入口在启动 Codex 前先让 `pending` 版本尝试取得更新门与独占活动锁。没有活动工作区时，等待版本更新 Codex 插件、稳定入口所有权和安装状态，完整验证后把原 `current` 移入 `previous` 并提交新 `current`；存在活动工作区时保持 `pending` 不变并启动原 `current`。稳定入口在组件检查与新工作区登记之间继续使用同一更新门协调，禁止检查后切换的竞态。
-- 激活先完成全部路径、权限、冲突和文件占用预检，再暂存受影响组件；Codex 插件、稳定入口、所有权状态和版本指针属于一个事务。稳定入口、快捷入口与安装状态的原子替换和回滚快照共用同一受管文件事务实现。任一步失败时按相反顺序恢复旧组件与旧安装状态并重新验证；回滚成功后可继续启动旧 `current`，回滚失败必须同时报告原始失败与恢复失败，不得声称环境可用。
+- 激活先完成全部路径、权限、冲突和文件占用预检，再暂存受影响组件；Codex 插件、稳定入口、所有权状态和版本指针属于一个事务。稳定入口、快捷入口与安装状态的原子替换和回滚快照共用同一受管文件事务实现；Codex 插件快照还必须保留原始 `config.toml`，区分未安装、已安装但禁用和已启用，失败回滚后恢复准确状态。任一步失败时按相反顺序恢复旧组件与旧安装状态并重新验证；回滚成功后可继续启动旧 `current`，回滚失败必须同时报告原始失败与恢复失败，不得声称环境可用。
 - 成功激活保留原 `current` 为 `previous`。下一次成功暂存不同版本时清除旧 `previous` 和被替代的 `pending` 引用，并尽力删除未被状态引用的合法版本目录；占用、杀毒软件或权限导致的删除失败只留下无引用残留，不能使升级失败。首次从没有 schema 1 安装状态的单版本布局迁移时，因旧 `codex.pp.exe` 不具备转发能力，必须在任何稳定入口、插件或所有权状态修改前取得独占活动锁，因而只要求这一次先关闭旧工作区。
 
 ## TUI
@@ -158,11 +158,11 @@ type Event struct {
 ## 安装边界
 
 - `scripts/install.ps1` 是 GitHub 分发引导层，不复制 Go 安装事务。它在 PowerShell 5.1／7 中解析目标版本，通过 GitHub Release 固定下载地址获取 Windows x64 可执行文件与 SHA-256，在临时目录校验后直接以绝对路径调用该已验证程序的 `setup codex`。版本暂存、稳定入口、激活和回滚全部由 Go 安装事务拥有。脚本不调用 GitHub API、不安装 Codex、不修改 `PATH`、Profile、执行策略或系统配置；失败时不得替换已有可用程序。
-- 引导层的 `Invoke-WebRequest` 使用 PowerShell 当前代理与证书配置，SHA-256 校验直接使用 .NET 加密 API，避免 PowerShell 7 启动 Windows PowerShell 5.1 时继承不兼容模块路径。受管 Zellij 继续由 Go `http.DefaultClient` 下载，只读取 `HTTP_PROXY`／`HTTPS_PROXY`／`NO_PROXY`，不把 Windows 系统代理自动转换为环境变量；`PATH` 中已有准确版本 Zellij 时跳过该下载。两条链路的错误都必须保留组件和阶段语义：主程序与摘要下载指出 Release 资产和 GitHub／代理检查方向，Zellij 请求错误指出 GitHub 可达性及 `HTTPS_PROXY` 或预安装准确版本的处理方向，HTTP 非 200、摘要不匹配、大小超限、写入和替换失败继续使用各自精确错误。
-- 默认安装根目录与 `PROMPT_PANE_HOME` 使用同一解析规则；脚本支持显式版本用于复现和诊断，但不直接写安装状态或负责回滚。已经校验的程序负责把自身写入摘要命名的版本目录，并由 Go 事务统一拥有稳定入口、Codex 插件、`codex.pp`、版本状态和 Zellij。
+- 引导层的 `Invoke-WebRequest` 使用 PowerShell 当前代理与证书配置，SHA-256 校验直接使用 .NET 加密 API，避免 PowerShell 7 启动 Windows PowerShell 5.1 时继承不兼容模块路径。受管 Zellij 继续由 Go `http.DefaultClient` 下载，只读取 `HTTP_PROXY`／`HTTPS_PROXY`／`NO_PROXY`，不把 Windows 系统代理自动转换为环境变量；`PATH` 中已有准确版本 Zellij 时跳过该下载。通过摘要校验的 Zellij 先写入目标目录内的临时文件，再复用受管文件事务原子替换目标；替换失败必须清理临时文件并保留原目标。两条链路的错误都必须保留组件和阶段语义：主程序与摘要下载指出 Release 资产和 GitHub／代理检查方向，Zellij 请求错误指出 GitHub 可达性及 `HTTPS_PROXY` 或预安装准确版本的处理方向，HTTP 非 200、摘要不匹配、大小超限、写入和替换失败继续使用各自精确错误。
+- 默认安装根目录与 `PROMPT_PANE_HOME` 使用同一解析规则；脚本支持显式版本用于复现和诊断，但不直接写安装状态或负责回滚。已经校验的程序负责把自身写入摘要命名的版本目录，并由 Go 事务统一拥有稳定入口、Codex 插件、`codex.pp` 和版本状态；受管 Zellij 作为可复用依赖独立暂存并原子替换。
 - 公开用例在开始安装或启动工作区前校验 `windows/amd64`；`setup codex` 与 `doctor` 还要发现一个可运行的 PowerShell 5.1 或 7。Hook 的 `commandWindows` 只使用两者共有的调用运算符、环境变量和原生退出码语法。
 - Codex 继续通过 `exec.LookPath` 发现，所有路径通过 `filepath` 和结构化 argv 传递，不假定盘符、用户名、npm 包管理器或无空格路径。任何下载和持久安装之前，对 Prompt Pane 数据目录、Codex 配置目录及 `codex.pp` 目标目录执行临时文件写入探测并立即清理。
-- `setup codex` 列出需要处理的受管组件后，提取 `plugins/prompt-pane/` 中内嵌的插件，将当前 Windows 可执行文件复制到插件目录，并生成符合 Codex 目录约定的本地 marketplace；Hook 通过 Codex 提供的 `PLUGIN_ROOT` 和 PowerShell 调用运算符调用该副本，并显式透传原生退出码，不依赖系统 `PATH`，安装仍只使用 Codex 官方 plugin 命令且不手工修改 `config.toml`。安装事务完成后，setup 调用与独立 `doctor` 相同的只读环境检查；检查失败则整体返回失败，只有全部通过才输出启动命令。
+- `setup codex` 列出需要处理的受管组件后，提取 `plugins/prompt-pane/` 中内嵌的插件，将当前 Windows 可执行文件复制到插件目录，并生成符合 Codex 目录约定的本地 marketplace；Hook 通过 Codex 提供的 `PLUGIN_ROOT` 和 PowerShell 调用运算符调用该副本，并显式透传原生退出码，不依赖系统 `PATH`。正常安装只使用 Codex 官方 plugin 命令；回滚额外通过受管文件快照恢复操作前的完整 `config.toml`，不得重写或推断其他配置。安装事务完成后，setup 调用与独立 `doctor` 相同的只读环境检查；检查失败则整体返回失败，只有全部通过才输出启动命令。
 - `codex.pp` 与兼容入口 `prompt-pane codex` 在创建运行身份和 IPC 前调用同一安装事务；全部组件就绪时不产生安装输出，缺失或过期时列出并自动修复，验证成功后才继续原始 Codex argv。失败时不会启动 Zellij，也不会修改 Hook 信任状态。
 - 首次 `setup codex` 将当前已验证程序同时写入版本目录、稳定 `prompt-pane.exe` 与用户 `codex.cmd` 同目录的 `codex.pp.exe`，并记录不含敏感信息的入口所有权路径、入口摘要和版本状态。后续版本变化不要求替换稳定入口；已有同名非受管文件或受管文件被外部修改时停止，不覆盖冲突。稳定入口不修改 `codex.cmd`、PowerShell Profile 或 `PATH`。
 - 安装进度由安装用例发布规范化阶段和下载字节数，Bubble Tea 动画只消费进度并渲染；非交互输出使用同一进度事件生成逐行文本。渲染失败不得改变安装事务结果。

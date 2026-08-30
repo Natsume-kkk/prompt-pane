@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"runtime"
 
+	"github.com/Natsume-kkk/prompt-pane/internal/filetxn"
 	"github.com/Natsume-kkk/prompt-pane/internal/paths"
 )
 
@@ -110,21 +111,39 @@ func InstallManagedWithProgress(ctx context.Context, progress func(downloaded, t
 		if hex.EncodeToString(hash[:]) != windowsHash {
 			return "", fmt.Errorf("downloaded Zellij checksum does not match the pinned release; no file was installed, so retry and report the release if the mismatch persists")
 		}
-		temporaryTarget := target + ".tmp"
-		if err := os.WriteFile(temporaryTarget, binary, 0o700); err != nil {
-			return "", fmt.Errorf("write managed Zellij: %w; check Prompt Pane directory permissions and available disk space", err)
-		}
-		if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
-			_ = os.Remove(temporaryTarget)
-			return "", fmt.Errorf("replace managed Zellij: %w; close running Zellij processes and retry", err)
-		}
-		if err := os.Rename(temporaryTarget, target); err != nil {
-			_ = os.Remove(temporaryTarget)
-			return "", fmt.Errorf("activate managed Zellij: %w; check Prompt Pane directory permissions and retry", err)
+		if err := writeManagedBinary(target, binary, filetxn.Replace); err != nil {
+			return "", err
 		}
 		return target, nil
 	}
 	return "", fmt.Errorf("downloaded Zellij archive has no Windows executable; no file was installed, so verify the pinned release and retry")
+}
+
+func writeManagedBinary(target string, binary []byte, replace func(source, destination string) error) error {
+	temporary, err := os.CreateTemp(filepath.Dir(target), ".zellij-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create managed Zellij temporary file: %w; check Prompt Pane directory permissions", err)
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	written, writeErr := temporary.Write(binary)
+	if writeErr == nil && written != len(binary) {
+		writeErr = io.ErrShortWrite
+	}
+	closeErr := temporary.Close()
+	if writeErr != nil {
+		return fmt.Errorf("write managed Zellij: %w; check Prompt Pane directory permissions and available disk space", writeErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("finish writing managed Zellij: %w; check available disk space", closeErr)
+	}
+	if err := os.Chmod(temporaryPath, 0o700); err != nil {
+		return fmt.Errorf("prepare managed Zellij: %w; check Prompt Pane directory permissions", err)
+	}
+	if err := replace(temporaryPath, target); err != nil {
+		return fmt.Errorf("replace managed Zellij: %w; close running Zellij processes and retry", err)
+	}
+	return nil
 }
 
 func zellijRequestError(err error) error {

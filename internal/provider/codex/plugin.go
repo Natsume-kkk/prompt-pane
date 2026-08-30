@@ -33,6 +33,16 @@ type pluginList struct {
 	} `json:"installed"`
 }
 
+type listedPluginState struct {
+	installed bool
+	enabled   bool
+}
+
+type pluginConfigState struct {
+	present bool
+	enabled bool
+}
+
 func PluginInstalled(codexPath string) bool {
 	executable, err := os.Executable()
 	if err != nil {
@@ -54,20 +64,28 @@ func PluginInstalledFor(codexPath, executable string) bool {
 }
 
 func pluginListed(codexPath string) bool {
+	state := inspectListedPlugin(codexPath)
+	return state.installed && state.enabled
+}
+
+func inspectListedPlugin(codexPath string) listedPluginState {
 	output, err := runCodex(codexPath, "plugin", "list", "--json")
 	if err != nil {
-		return false
+		return listedPluginState{}
 	}
 	var list pluginList
 	if json.Unmarshal(output, &list) != nil {
-		return false
+		return listedPluginState{}
 	}
+	state := listedPluginState{}
 	for _, entry := range list.Installed {
-		if entry.Name == pluginName && entry.Marketplace == marketplaceName && entry.Installed && entry.Enabled {
-			return true
+		if entry.Name != pluginName || entry.Marketplace != marketplaceName || !entry.Installed {
+			continue
 		}
+		state.installed = true
+		state.enabled = state.enabled || entry.Enabled
 	}
-	return false
+	return state
 }
 
 func codexHome() (string, error) {
@@ -113,19 +131,30 @@ func installedPluginVersion() (string, error) {
 }
 
 func pluginEnabled(home string) bool {
+	return inspectPluginConfig(home).enabled
+}
+
+func inspectPluginConfig(home string) pluginConfigState {
 	file, err := os.Open(filepath.Join(home, "config.toml"))
 	if err != nil {
-		return false
+		return pluginConfigState{}
 	}
 	defer file.Close()
 
 	const section = `[plugins."prompt-pane@prompt-pane"]`
 	inSection := false
+	state := pluginConfigState{}
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if strings.HasPrefix(line, "[") {
+			if inSection {
+				break
+			}
 			inSection = line == section
+			if inSection {
+				state = pluginConfigState{present: true, enabled: true}
+			}
 			continue
 		}
 		if !inSection {
@@ -133,10 +162,14 @@ func pluginEnabled(home string) bool {
 		}
 		key, value, ok := strings.Cut(line, "=")
 		if ok && strings.TrimSpace(key) == "enabled" {
-			return strings.TrimSpace(value) == "true"
+			value = strings.TrimSpace(strings.SplitN(value, "#", 2)[0])
+			state.enabled = value == "true"
 		}
 	}
-	return false
+	if scanner.Err() != nil {
+		return pluginConfigState{}
+	}
+	return state
 }
 
 type pluginManifest struct {
